@@ -1,0 +1,17 @@
+/target:winexe
+/out:CodeInspect.exe
+/optimize+
+/debug:pdbonly
+/nologo
+/reference:System.dll
+/reference:System.Drawing.dll
+/reference:System.Windows.Forms.dll
+/reference:System.Data.dll
+Program.cs
+MainForm.cs
+Analyzer.cs
+VulnerabilityRules.cs
+RuleStore.cs
+RulePacks.cs
+RulesEditorForm.cs
+ErrorLogger.cs
