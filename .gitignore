@@ -90,3 +90,6 @@ $RECYCLE.BIN/
 .claude/settings.local.json
 codeinspect_rules/backup
 test_samples
+codeinspect_logs
+codeinspect_rules
+codeinspect_projects.txt

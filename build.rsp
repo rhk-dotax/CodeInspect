@@ -7,6 +7,7 @@
 /reference:System.Drawing.dll
 /reference:System.Windows.Forms.dll
 /reference:System.Data.dll
+/reference:System.Web.Extensions.dll
 Program.cs
 MainForm.cs
 Analyzer.cs
@@ -15,3 +16,5 @@ RuleStore.cs
 RulePacks.cs
 RulesEditorForm.cs
 ErrorLogger.cs
+LLMAnalyzer.cs
+LLMConfigForm.cs

@@ -176,6 +176,48 @@ Windows 오프라인(폐쇄망) 환경에서 설치 없이 동작하는 소스�
    ...
 ```
 
+### v1.3 — LLM 기반 분석 옵션 (2026-04-27)
+**배경**: 정규식 룰셋은 빠르지만 새로운/문맥적 취약점을 놓칠 수 있어, 사용자의 로컬에서 구동되는 LLM(Ollama, LM Studio)을 통해 의미 기반 분석을 보완 옵션으로 추가. 폐쇄망 제약을 위해 외부 클라우드 API는 일절 호출하지 않고, 동일 머신/LAN의 로컬 LLM 엔드포인트만 호출하도록 설계.
+
+- **신규 `LLMAnalyzer.cs`** — Ollama / LM Studio HTTP 호출 및 응답 파싱
+  - `LLMConfig` (동일 파일 내) — `codeinspect_rules/llm_config.txt`에 INI 스타일 저장. 필드: provider(ollama|lmstudio), endpoint, model, timeoutSec(기본 120), temperature(기본 0.1), maxFileSizeKB(기본 50)
+  - `LLMAnalyzer.AnalyzeFile / AnalyzeDirectory` — `CodeAnalyzer`와 동일 시그니처로 다형성 확보. 디렉토리 제외 정책(.git/bin/obj 등)도 동일
+  - **큰 파일 처리** — `MaxFileSizeKB` 초과 시 LOW 심각도 'LLM-SKIP' Finding 1건 추가 후 스킵
+  - **HTTP 클라이언트** — `HttpWebRequest` 사용 (.NET 4.0 호환, 신규 DLL 의존성 없음)
+  - **JSON** — `System.Web.Script.Serialization.JavaScriptSerializer` (`System.Web.Extensions.dll`, .NET Framework 표준 포함)
+  - **Provider별 엔드포인트**:
+    - Ollama: `POST /api/generate` (body `{model,prompt,stream:false,options:{temperature}}`), 응답 `.response`
+    - LM Studio: `POST /v1/chat/completions` (OpenAI 호환), 응답 `.choices[0].message.content`
+  - **모델 자동 조회** — `LLMAnalyzer.ListModels(provider, endpoint, ...)` 정적 메서드 (Ollama `/api/tags`, LM Studio `/v1/models`)
+  - **응답 파싱** — 마크다운 코드블록 제거, JSON 배열만 추출. 각 항목을 `Finding`으로 매핑(severity 4단계 검증, MatchedCode는 실제 파일 라인에서 추출)
+  - **에러 격리** — HTTP/파싱 실패 시 'LLM-ERROR' Finding 1건 남기고 다음 파일로 계속(분석 전체 중단 안 함)
+- **신규 `LLMConfigForm.cs`** — 모달 설정 다이얼로그
+  - Provider 라디오(Ollama/LM Studio), 엔드포인트, 모델 ComboBox + '모델 목록' 버튼, Timeout/Temperature/MaxFileKB NumericUpDown, '연결 테스트' 버튼, 상태 로그 영역
+  - 프로바이더 변경 시 엔드포인트 기본값 자동 변경(Ollama=11434, LM Studio=1234)
+  - OK 클릭 시 `LLMConfig.Save()`로 저장, Cancel은 변경 무시
+- **`MainForm.cs` 수정**
+  - 좌측 패널 Git Hook 바로 아래에 LLM 섹션 추가: `chkUseLLM` 체크박스 + `btnLLMConfig` 설정 버튼 + `lblLLMStatus` 상태 라벨. 룰셋 섹션은 그 아래로 이동
+  - 폼 크기: 920 → 1020 (높이만 확대), MinimumSize 780 → 880, 타이틀 v1.2 → v1.3
+  - `RunAnalysis(...)` 분기 — 체크박스 ON 시 `LLMAnalyzer`로 분석, OFF 시 기존 `CodeAnalyzer` 사용 (룰셋 모드와 LLM 모드는 상호 배타)
+  - 체크박스 ON인데 LLM 미설정이면 `LLMConfigForm`을 자동으로 띄우고, Cancel이면 분석 취소
+  - `ChkUseLLM_CheckedChanged` — LLM 모드 시 룰셋 관련 버튼 시각적 비활성화(Enabled=false)
+  - `UpdateLLMStatusLabel()` — 라벨에 "● ollama : llama3:8b" 또는 "(미설정 - ...)" 표시. 활성 상태일 땐 녹색
+  - 진행 상태/완료 메시지에 "[LLM]" 또는 "[룰셋]" 접두사로 모드 표시
+- **`build.rsp` 변경**
+  - `/reference:System.Web.Extensions.dll` 추가 (JavaScriptSerializer 용)
+  - `LLMAnalyzer.cs`, `LLMConfigForm.cs` 컴파일 포함
+- **결과 매핑** — 기존 `Finding` 클래스 그대로 사용:
+  - `RuleId` = `"LLM-{model}-{seq:D3}"` (예: `LLM-llama3-001`)
+  - `Severity` = LLM 응답값(CRITICAL/HIGH/MEDIUM/LOW로 검증, 잘못되면 MEDIUM)
+  - `Category` = LLM 응답값 (예: "CWE-89 SQL Injection")
+  - `Reason` = LLM 한국어 설명
+  - `MatchedCode` = LLM이 보고한 라인 번호로 실제 파일에서 직접 추출 (LLM 위변조 방지)
+- **재사용** — DataGridView 컬럼/심각도 색상/CSV 내보내기/요약 패널/필터/로그 디렉토리/`BackgroundWorker` 패턴/`LogWriter`/`ErrorLogger` 모두 변경 없이 그대로 사용
+- **기본값 / 호환성** — 체크박스는 기본 OFF, 미사용자는 변경 없이 기존 동작. Git Hook 모드(`--hook`)는 LLM 모드 사용하지 않음(차후 확장 여지)
+- **빌드** — csc.exe @build.rsp 정상 빌드(exit 0, 경고 0건). EXE 130KB
+
+**C# 5 호환성**: `$""`, `?.`, pattern matching, `out var`, `nameof`, auto-property initializer 미사용. `BackgroundWorker` 패턴 유지(async/await 미사용).
+
 ---
 
 ## 현재 파일 구조
@@ -187,16 +229,19 @@ codeinspect/
 ├── RulePacks.cs             # 내장 룰팩: Semgrep/OWASP ASVS (v0.10~)
 ├── RulesEditorForm.cs       # 룰셋 관리/편집/업데이트 UI (v0.9~) + 출처 컬럼 (v0.10~)
 ├── Analyzer.cs              # 분석 엔진 + 로그 기록
-├── MainForm.cs              # WinForms GUI (멀티 프로젝트 + 룰셋 관리)
+├── MainForm.cs              # WinForms GUI (멀티 프로젝트 + 룰셋 + LLM 옵션 v1.3~)
 ├── Program.cs               # 엔트리포인트 (GUI/Hook 듀얼 모드) + 전역 예외 훅 (v0.11~)
 ├── ErrorLogger.cs           # 실행 디렉토리에 yyyy-MM-dd-HH-mm-ss.log 기록 (v0.11~)
+├── LLMAnalyzer.cs           # LLM(Ollama/LM Studio) 분석 엔진 + LLMConfig (v1.3~)
+├── LLMConfigForm.cs         # LLM 모델/엔드포인트 설정 다이얼로그 (v1.3~)
 ├── build.bat                # 빌드 런처
 ├── build.rsp                # csc.exe 옵션 파일
 ├── install_hook.bat         # CLI hook 설치 스크립트
-├── CodeInspect.exe          # 빌드 산출물 (~80KB)
+├── CodeInspect.exe          # 빌드 산출물 (~130KB)
 ├── codeinspect_rules/       # 런타임 생성 (첫 실행 시)
 │   ├── rules.config         # 사용자 편집 가능 룰셋 파일
 │   ├── update_url.txt       # 다운로드 URL 저장
+│   ├── llm_config.txt       # LLM 분석 설정 (v1.3~)
 │   └── backup/              # 룰 변경 시 이전 버전 보관
 ├── codeinspect_projects.txt # 등록된 프로젝트 경로 목록
 ├── test_samples/            # 샘플 취약점 코드 (C/Java/C#)

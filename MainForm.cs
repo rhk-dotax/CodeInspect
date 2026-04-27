@@ -25,6 +25,11 @@ namespace CodeInspect
         private Label lblRuleCount;
         private Label lblProjectCount;
 
+        // ── LLM 분석 패널 ──
+        private CheckBox chkUseLLM;
+        private Button btnLLMConfig;
+        private Label lblLLMStatus;
+
         // ── 결과 영역 ──
         private DataGridView dgvResults;
         private Label lblStatus;
@@ -54,6 +59,7 @@ namespace CodeInspect
             _configPath = Path.Combine(Application.StartupPath, "codeinspect_projects.txt");
             LoadProjects();
             UpdateRuleCount();
+            UpdateLLMStatusLabel();
         }
 
         private void UpdateRuleCount()
@@ -72,9 +78,9 @@ namespace CodeInspect
 
         private void InitializeComponent()
         {
-            this.Text = "CodeInspect - 코드 취약점 분석기 v1.2";
-            this.Size = new Size(1300, 920);
-            this.MinimumSize = new Size(1000, 780);
+            this.Text = "CodeInspect - 코드 취약점 분석기 v1.3";
+            this.Size = new Size(1300, 1020);
+            this.MinimumSize = new Size(1000, 880);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.Font = new Font("맑은 고딕", 9F);
 
@@ -228,11 +234,59 @@ namespace CodeInspect
             };
             btnRemoveHookSelected.Click += BtnRemoveHookSelected_Click;
 
-            // 구분선 + 분석 룰셋 섹션
-            var separator3 = new Label
+            // ── 구분선 + LLM 분석 섹션 (Git Hook 바로 아래) ──
+            var separatorLLM = new Label
             {
                 BorderStyle = BorderStyle.Fixed3D,
                 Location = new Point(8, 566),
+                Size = new Size(290, 2)
+            };
+
+            var lblLLMHeader = new Label
+            {
+                Text = "LLM 분석",
+                Font = new Font("맑은 고딕", 10F, FontStyle.Bold),
+                Location = new Point(8, 575),
+                AutoSize = true
+            };
+
+            chkUseLLM = new CheckBox
+            {
+                Text = "LLM으로 분석하기 (룰셋 분석 비활성화)",
+                Location = new Point(8, 600),
+                Size = new Size(290, 24),
+                Font = new Font("맑은 고딕", 9F),
+                Checked = false
+            };
+            chkUseLLM.CheckedChanged += ChkUseLLM_CheckedChanged;
+
+            btnLLMConfig = new Button
+            {
+                Text = "⚙ 모델 / 엔드포인트 설정",
+                Location = new Point(8, 626),
+                Size = new Size(290, 30),
+                BackColor = Color.FromArgb(102, 16, 242),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat
+            };
+            btnLLMConfig.Click += BtnLLMConfig_Click;
+
+            lblLLMStatus = new Label
+            {
+                Text = "(미설정)",
+                Font = new Font("맑은 고딕", 8.5F),
+                ForeColor = Color.Gray,
+                Location = new Point(8, 661),
+                AutoSize = false,
+                Size = new Size(290, 18),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            // ── 구분선 + 분석 룰셋 섹션 (LLM 섹션 아래로 이동) ──
+            var separator3 = new Label
+            {
+                BorderStyle = BorderStyle.Fixed3D,
+                Location = new Point(8, 686),
                 Size = new Size(290, 2)
             };
 
@@ -240,7 +294,7 @@ namespace CodeInspect
             {
                 Text = "분석 룰셋",
                 Font = new Font("맑은 고딕", 10F, FontStyle.Bold),
-                Location = new Point(8, 575),
+                Location = new Point(8, 695),
                 AutoSize = true
             };
             lblRuleCount = new Label
@@ -248,14 +302,14 @@ namespace CodeInspect
                 Text = "(0개)",
                 Font = new Font("맑은 고딕", 9F),
                 ForeColor = Color.Gray,
-                Location = new Point(80, 577),
+                Location = new Point(80, 697),
                 AutoSize = true
             };
 
             btnManageRules = new Button
             {
                 Text = "룰셋 관리 (리스트 추가/수정/삭제)",
-                Location = new Point(8, 600),
+                Location = new Point(8, 720),
                 Size = new Size(290, 30),
                 BackColor = Color.FromArgb(0, 123, 255),
                 ForeColor = Color.White,
@@ -266,7 +320,7 @@ namespace CodeInspect
             btnViewRules = new Button
             {
                 Text = "룰셋 보기 (notepad)",
-                Location = new Point(8, 635),
+                Location = new Point(8, 755),
                 Size = new Size(142, 30),
                 BackColor = Color.FromArgb(108, 117, 125),
                 ForeColor = Color.White,
@@ -277,7 +331,7 @@ namespace CodeInspect
             btnUpdateRules = new Button
             {
                 Text = "룰셋 업데이트",
-                Location = new Point(156, 635),
+                Location = new Point(156, 755),
                 Size = new Size(142, 30),
                 BackColor = Color.FromArgb(23, 162, 184),
                 ForeColor = Color.White,
@@ -290,6 +344,7 @@ namespace CodeInspect
                 btnAddProject, btnRemoveProject,
                 separator1, btnAnalyzeSelected, btnAnalyzeAll,
                 separator2, btnInstallHookSelected, btnRemoveHookSelected,
+                separatorLLM, lblLLMHeader, chkUseLLM, btnLLMConfig, lblLLMStatus,
                 separator3, lblRuleHeader, lblRuleCount,
                 btnManageRules, btnViewRules, btnUpdateRules
             });
@@ -565,17 +620,51 @@ namespace CodeInspect
 
         private void RunAnalysis(List<string> projectPaths)
         {
+            // ── LLM 모드 사전 검증 ──
+            bool useLLM = chkUseLLM.Checked;
+            LLMConfig llmConfig = null;
+            if (useLLM)
+            {
+                llmConfig = LLMConfig.Load();
+                if (!llmConfig.IsConfigured())
+                {
+                    MessageBox.Show("LLM 설정이 필요합니다.\n설정 다이얼로그를 띄웁니다.",
+                        "LLM 미설정", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    using (var dlg = new LLMConfigForm())
+                    {
+                        if (dlg.ShowDialog(this) != DialogResult.OK)
+                        {
+                            lblStatus.Text = "LLM 설정 취소 - 분석을 시작하지 않았습니다.";
+                            return;
+                        }
+                    }
+                    llmConfig = LLMConfig.Load();
+                    UpdateLLMStatusLabel();
+                    if (!llmConfig.IsConfigured())
+                    {
+                        MessageBox.Show("LLM 설정이 완료되지 않았습니다.", "LLM 설정",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                }
+            }
+
             btnAnalyzeSelected.Enabled = false;
             btnAnalyzeAll.Enabled = false;
             _findings.Clear();
             dgvResults.Rows.Clear();
             progressBar.Value = 0;
 
-            // 최신 룰셋 반영 (파일 기반이므로 편집 후 즉시 적용됨)
-            _analyzer = new CodeAnalyzer();
+            // 룰셋 모드일 때만 최신 룰셋 반영
+            if (!useLLM) _analyzer = new CodeAnalyzer();
 
             int totalProjects = projectPaths.Count;
-            lblStatus.Text = string.Format("분석 중... (0/{0} 프로젝트)", totalProjects);
+            string modeLabel = useLLM ? "LLM" : "룰셋";
+            lblStatus.Text = string.Format("{0} 분석 중... (0/{1} 프로젝트)", modeLabel, totalProjects);
+
+            // 캡쳐용 로컬 변수
+            bool useLLMLocal = useLLM;
+            LLMConfig llmConfigLocal = llmConfig;
 
             var worker = new BackgroundWorker();
             worker.WorkerReportsProgress = true;
@@ -588,13 +677,25 @@ namespace CodeInspect
                     string projPath = projectPaths[p];
                     string projName = Path.GetFileName(projPath);
 
-                    var findings = _analyzer.AnalyzeDirectory(projPath, (current, total, file, count) =>
+                    Action<int, int, string, int> progressCb = (current, total, file, count) =>
                     {
                         int overallPct = (int)(((double)p / totalProjects + (double)current / total / totalProjects) * 100);
-                        string msg = string.Format("[{0}/{1}] {2} - {3}",
-                            p + 1, totalProjects, projName, Path.GetFileName(file));
+                        string fileTag = string.IsNullOrEmpty(file) ? "" : Path.GetFileName(file);
+                        string msg = string.Format("[{0}] [{1}/{2}] {3} - {4}",
+                            modeLabel, p + 1, totalProjects, projName, fileTag);
                         worker.ReportProgress(Math.Min(overallPct, 100), msg);
-                    });
+                    };
+
+                    List<Finding> findings;
+                    if (useLLMLocal)
+                    {
+                        var llm = new LLMAnalyzer(llmConfigLocal);
+                        findings = llm.AnalyzeDirectory(projPath, progressCb);
+                    }
+                    else
+                    {
+                        findings = _analyzer.AnalyzeDirectory(projPath, progressCb);
+                    }
 
                     // 각 Finding에 프로젝트명 태깅 (FilePath에서 유추)
                     foreach (var f in findings) f.MatchedCode = projName + "|" + f.MatchedCode;
@@ -645,11 +746,59 @@ namespace CodeInspect
                 ApplyFilters();
                 UpdateSummary();
 
-                lblStatus.Text = string.Format("분석 완료 - {0}개 프로젝트, {1}건 검출",
-                    projectPaths.Count, _findings.Count);
+                lblStatus.Text = string.Format("{0} 분석 완료 - {1}개 프로젝트, {2}건 검출",
+                    modeLabel, projectPaths.Count, _findings.Count);
             };
 
             worker.RunWorkerAsync();
+        }
+
+        // ════════════════════════════════════════
+        //  LLM 분석 관련 핸들러
+        // ════════════════════════════════════════
+
+        private void ChkUseLLM_CheckedChanged(object sender, EventArgs e)
+        {
+            // 룰셋 관련 버튼은 비활성화 (LLM 모드 시 사용 안 함을 시각적으로 표시)
+            bool ruleEnabled = !chkUseLLM.Checked;
+            btnManageRules.Enabled = ruleEnabled;
+            btnViewRules.Enabled = ruleEnabled;
+            btnUpdateRules.Enabled = ruleEnabled;
+            UpdateLLMStatusLabel();
+        }
+
+        private void BtnLLMConfig_Click(object sender, EventArgs e)
+        {
+            using (var dlg = new LLMConfigForm())
+            {
+                dlg.ShowDialog(this);
+            }
+            UpdateLLMStatusLabel();
+        }
+
+        private void UpdateLLMStatusLabel()
+        {
+            if (lblLLMStatus == null) return;
+            try
+            {
+                var cfg = LLMConfig.Load();
+                if (cfg.IsConfigured())
+                {
+                    lblLLMStatus.Text = string.Format("● {0} : {1}", cfg.Provider, cfg.Model);
+                    lblLLMStatus.ForeColor = chkUseLLM != null && chkUseLLM.Checked
+                        ? Color.FromArgb(40, 167, 69) : Color.Gray;
+                }
+                else
+                {
+                    lblLLMStatus.Text = "(미설정 - 설정 버튼을 눌러 모델을 지정하세요)";
+                    lblLLMStatus.ForeColor = Color.Gray;
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Log(ex, "MainForm.UpdateLLMStatusLabel");
+                lblLLMStatus.Text = "(?)";
+            }
         }
 
         // ════════════════════════════════════════
