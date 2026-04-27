@@ -124,6 +124,10 @@ namespace CodeInspect
         private readonly LLMConfig _config;
         private int _findingSeq;
 
+        // 취소 상태 (volatile: 워커 스레드와 UI 스레드 가시성)
+        private volatile bool _cancelRequested;
+        private HttpWebRequest _currentRequest;
+
         // CodeAnalyzer와 동일한 디렉토리 제외 정책
         private static readonly HashSet<string> ExcludedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -136,6 +140,23 @@ namespace CodeInspect
             if (config == null) throw new ArgumentNullException("config");
             _config = config;
             _findingSeq = 0;
+        }
+
+        // ── 취소 요청 (UI 스레드에서 호출, 진행 중 HTTP 요청 즉시 Abort) ──
+        public void Cancel()
+        {
+            _cancelRequested = true;
+            HttpWebRequest r = _currentRequest;
+            if (r != null)
+            {
+                try { r.Abort(); }
+                catch { /* 이미 종료된 요청 등 무시 */ }
+            }
+        }
+
+        public bool IsCancelRequested
+        {
+            get { return _cancelRequested; }
         }
 
         // ── 단일 파일 분석 ──
@@ -180,6 +201,9 @@ namespace CodeInspect
             }
             catch (Exception ex)
             {
+                // 사용자가 분석을 취소한 경우는 silent (Abort에 의한 WebException/IOException)
+                if (_cancelRequested) return new List<Finding>();
+
                 ErrorLogger.Log(ex, "LLMAnalyzer.AnalyzeFile (HTTP) - " + filePath);
                 findings.Add(new Finding
                 {
@@ -220,6 +244,12 @@ namespace CodeInspect
         // ── 디렉토리 분석 (CodeAnalyzer와 동일 시그니처) ──
         public List<Finding> AnalyzeDirectory(string directory, Action<int, int, string, int> progress = null)
         {
+            return AnalyzeDirectory(directory, progress, null);
+        }
+
+        // ── 디렉토리 분석 (취소 콜백 지원) ──
+        public List<Finding> AnalyzeDirectory(string directory, Action<int, int, string, int> progress, Func<bool> isCancelRequested)
+        {
             var allFindings = new List<Finding>();
             var targetExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var kv in VulnerabilityRules.LanguageExtensions)
@@ -232,6 +262,9 @@ namespace CodeInspect
 
             for (int i = 0; i < total; i++)
             {
+                if (_cancelRequested) break;
+                if (isCancelRequested != null && isCancelRequested()) { _cancelRequested = true; break; }
+
                 var fs = AnalyzeFile(files[i]);
                 allFindings.AddRange(fs);
                 if (progress != null) progress(i + 1, total, files[i], fs.Count);
@@ -251,12 +284,8 @@ namespace CodeInspect
                 try
                 {
                     // 테스트는 최대 30초로 제한
-                    var tmp = new LLMConfig
-                    {
-                        Provider = _config.Provider, Endpoint = _config.Endpoint, Model = _config.Model,
-                        TimeoutSeconds = Math.Min(saved, 30), Temperature = _config.Temperature, MaxFileSizeKB = _config.MaxFileSizeKB
-                    };
-                    HttpPost(url, body, tmp.TimeoutSeconds);
+                    int timeoutSec = Math.Min(saved, 30);
+                    HttpPost(url, body, timeoutSec);
                 }
                 finally { /* nothing */ }
                 return null;
@@ -545,7 +574,8 @@ namespace CodeInspect
             }
         }
 
-        private static string HttpPost(string url, string jsonBody, int timeoutSec)
+        // 인스턴스 HttpPost — 진행 중 HttpWebRequest를 _currentRequest에 보관하여 Cancel() 시 Abort 가능
+        private string HttpPost(string url, string jsonBody, int timeoutSec)
         {
             var req = (HttpWebRequest)WebRequest.Create(url);
             req.Method = "POST";
@@ -556,31 +586,43 @@ namespace CodeInspect
 
             byte[] data = Encoding.UTF8.GetBytes(jsonBody);
             req.ContentLength = data.Length;
-            using (var rs = req.GetRequestStream())
-            {
-                rs.Write(data, 0, data.Length);
-            }
 
+            _currentRequest = req;
             try
             {
-                using (var resp = (HttpWebResponse)req.GetResponse())
-                using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                using (var rs = req.GetRequestStream())
                 {
-                    return sr.ReadToEnd();
+                    rs.Write(data, 0, data.Length);
                 }
-            }
-            catch (WebException wex)
-            {
-                // 본문 메시지를 함께 전달해 디버깅 도움
-                if (wex.Response != null)
+
+                try
                 {
-                    using (var sr = new StreamReader(wex.Response.GetResponseStream(), Encoding.UTF8))
+                    using (var resp = (HttpWebResponse)req.GetResponse())
+                    using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
                     {
-                        string body = sr.ReadToEnd();
-                        throw new Exception("HTTP 오류: " + wex.Message + " | 본문: " + TruncateForDisplay(body, 300), wex);
+                        return sr.ReadToEnd();
                     }
                 }
-                throw;
+                catch (WebException wex)
+                {
+                    // Abort에 의한 RequestCanceled는 호출자에서 _cancelRequested 검사로 silent 처리
+                    if (_cancelRequested) throw;
+
+                    // 본문 메시지를 함께 전달해 디버깅 도움
+                    if (wex.Response != null)
+                    {
+                        using (var sr = new StreamReader(wex.Response.GetResponseStream(), Encoding.UTF8))
+                        {
+                            string body = sr.ReadToEnd();
+                            throw new Exception("HTTP 오류: " + wex.Message + " | 본문: " + TruncateForDisplay(body, 300), wex);
+                        }
+                    }
+                    throw;
+                }
+            }
+            finally
+            {
+                _currentRequest = null;
             }
         }
 

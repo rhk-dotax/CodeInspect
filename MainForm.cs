@@ -17,6 +17,7 @@ namespace CodeInspect
         private Button btnRemoveProject;
         private Button btnAnalyzeSelected;
         private Button btnAnalyzeAll;
+        private Button btnCancelAnalysis;
         private Button btnInstallHookSelected;
         private Button btnRemoveHookSelected;
         private Button btnManageRules;
@@ -52,6 +53,13 @@ namespace CodeInspect
         // 프로젝트 설정 파일 경로
         private string _configPath;
 
+        // ── 분석 취소 상태 ──
+        // _cancelMode: 0=None, 1=ProjectOnly(현재 프로젝트만 건너뛰기), 2=All(전체 중지)
+        private volatile int _cancelMode;
+        private BackgroundWorker _worker;
+        private LLMAnalyzer _activeLLM;
+        private List<string> _currentProjectPaths;
+
         public MainForm()
         {
             InitializeComponent();
@@ -78,7 +86,7 @@ namespace CodeInspect
 
         private void InitializeComponent()
         {
-            this.Text = "CodeInspect - 코드 취약점 분석기 v1.3";
+            this.Text = "CodeInspect - 코드 취약점 분석기 v1.4";
             this.Size = new Size(1300, 1020);
             this.MinimumSize = new Size(1000, 880);
             this.StartPosition = FormStartPosition.CenterScreen;
@@ -204,18 +212,32 @@ namespace CodeInspect
             };
             btnAnalyzeAll.Click += BtnAnalyzeAll_Click;
 
+            // ── 분석 중지 버튼 (분석 시작 버튼 아래) ──
+            btnCancelAnalysis = new Button
+            {
+                Text = "■ 분석 중지",
+                Location = new Point(8, 510),
+                Size = new Size(290, 30),
+                BackColor = Color.FromArgb(255, 87, 34),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("맑은 고딕", 9.5F, FontStyle.Bold),
+                Enabled = false
+            };
+            btnCancelAnalysis.Click += BtnCancelAnalysis_Click;
+
             // 구분선
             var separator2 = new Label
             {
                 BorderStyle = BorderStyle.Fixed3D,
-                Location = new Point(8, 516),
+                Location = new Point(8, 552),
                 Size = new Size(290, 2)
             };
 
             btnInstallHookSelected = new Button
             {
                 Text = "Git Hook 설치 (선택 프로젝트)",
-                Location = new Point(8, 526),
+                Location = new Point(8, 562),
                 Size = new Size(142, 30),
                 BackColor = Color.FromArgb(40, 167, 69),
                 ForeColor = Color.White,
@@ -226,7 +248,7 @@ namespace CodeInspect
             btnRemoveHookSelected = new Button
             {
                 Text = "Git Hook 제거",
-                Location = new Point(156, 526),
+                Location = new Point(156, 562),
                 Size = new Size(142, 30),
                 BackColor = Color.FromArgb(220, 53, 69),
                 ForeColor = Color.White,
@@ -238,7 +260,7 @@ namespace CodeInspect
             var separatorLLM = new Label
             {
                 BorderStyle = BorderStyle.Fixed3D,
-                Location = new Point(8, 566),
+                Location = new Point(8, 602),
                 Size = new Size(290, 2)
             };
 
@@ -246,14 +268,14 @@ namespace CodeInspect
             {
                 Text = "LLM 분석",
                 Font = new Font("맑은 고딕", 10F, FontStyle.Bold),
-                Location = new Point(8, 575),
+                Location = new Point(8, 611),
                 AutoSize = true
             };
 
             chkUseLLM = new CheckBox
             {
                 Text = "LLM으로 분석하기 (룰셋 분석 비활성화)",
-                Location = new Point(8, 600),
+                Location = new Point(8, 636),
                 Size = new Size(290, 24),
                 Font = new Font("맑은 고딕", 9F),
                 Checked = false
@@ -263,7 +285,7 @@ namespace CodeInspect
             btnLLMConfig = new Button
             {
                 Text = "⚙ 모델 / 엔드포인트 설정",
-                Location = new Point(8, 626),
+                Location = new Point(8, 662),
                 Size = new Size(290, 30),
                 BackColor = Color.FromArgb(102, 16, 242),
                 ForeColor = Color.White,
@@ -276,7 +298,7 @@ namespace CodeInspect
                 Text = "(미설정)",
                 Font = new Font("맑은 고딕", 8.5F),
                 ForeColor = Color.Gray,
-                Location = new Point(8, 661),
+                Location = new Point(8, 697),
                 AutoSize = false,
                 Size = new Size(290, 18),
                 TextAlign = ContentAlignment.MiddleLeft
@@ -286,7 +308,7 @@ namespace CodeInspect
             var separator3 = new Label
             {
                 BorderStyle = BorderStyle.Fixed3D,
-                Location = new Point(8, 686),
+                Location = new Point(8, 722),
                 Size = new Size(290, 2)
             };
 
@@ -294,7 +316,7 @@ namespace CodeInspect
             {
                 Text = "분석 룰셋",
                 Font = new Font("맑은 고딕", 10F, FontStyle.Bold),
-                Location = new Point(8, 695),
+                Location = new Point(8, 731),
                 AutoSize = true
             };
             lblRuleCount = new Label
@@ -302,14 +324,14 @@ namespace CodeInspect
                 Text = "(0개)",
                 Font = new Font("맑은 고딕", 9F),
                 ForeColor = Color.Gray,
-                Location = new Point(80, 697),
+                Location = new Point(80, 733),
                 AutoSize = true
             };
 
             btnManageRules = new Button
             {
                 Text = "룰셋 관리 (리스트 추가/수정/삭제)",
-                Location = new Point(8, 720),
+                Location = new Point(8, 756),
                 Size = new Size(290, 30),
                 BackColor = Color.FromArgb(0, 123, 255),
                 ForeColor = Color.White,
@@ -320,7 +342,7 @@ namespace CodeInspect
             btnViewRules = new Button
             {
                 Text = "룰셋 보기 (notepad)",
-                Location = new Point(8, 755),
+                Location = new Point(8, 791),
                 Size = new Size(142, 30),
                 BackColor = Color.FromArgb(108, 117, 125),
                 ForeColor = Color.White,
@@ -331,7 +353,7 @@ namespace CodeInspect
             btnUpdateRules = new Button
             {
                 Text = "룰셋 업데이트",
-                Location = new Point(156, 755),
+                Location = new Point(156, 791),
                 Size = new Size(142, 30),
                 BackColor = Color.FromArgb(23, 162, 184),
                 ForeColor = Color.White,
@@ -342,7 +364,7 @@ namespace CodeInspect
             pnlLeft.Controls.AddRange(new Control[] {
                 lblProjHeader, lblProjectCount, lstProjects,
                 btnAddProject, btnRemoveProject,
-                separator1, btnAnalyzeSelected, btnAnalyzeAll,
+                separator1, btnAnalyzeSelected, btnAnalyzeAll, btnCancelAnalysis,
                 separator2, btnInstallHookSelected, btnRemoveHookSelected,
                 separatorLLM, lblLLMHeader, chkUseLLM, btnLLMConfig, lblLLMStatus,
                 separator3, lblRuleHeader, lblRuleCount,
@@ -651,6 +673,8 @@ namespace CodeInspect
 
             btnAnalyzeSelected.Enabled = false;
             btnAnalyzeAll.Enabled = false;
+            btnCancelAnalysis.Enabled = true;
+            btnCancelAnalysis.Text = "■ 분석 중지";
             _findings.Clear();
             dgvResults.Rows.Clear();
             progressBar.Value = 0;
@@ -666,35 +690,58 @@ namespace CodeInspect
             bool useLLMLocal = useLLM;
             LLMConfig llmConfigLocal = llmConfig;
 
-            var worker = new BackgroundWorker();
-            worker.WorkerReportsProgress = true;
+            // 취소 상태 초기화 + 진행 정보 저장
+            _cancelMode = 0;
+            _currentProjectPaths = projectPaths;
+            int completedProjects = 0;
+
+            _worker = new BackgroundWorker();
+            _worker.WorkerReportsProgress = true;
+            _worker.WorkerSupportsCancellation = true;
+            BackgroundWorker worker = _worker;
+
+            // 분석기에 전달할 취소 콜백 (파일 단위 취소 신호)
+            Func<bool> isCancelRequested = delegate() { return _cancelMode != 0 || worker.CancellationPending; };
 
             worker.DoWork += (ws, we) =>
             {
                 var allFindings = new List<Finding>();
                 for (int p = 0; p < projectPaths.Count; p++)
                 {
+                    // 전체 중지 — 즉시 루프 탈출
+                    if (_cancelMode == 2) break;
+
                     string projPath = projectPaths[p];
                     string projName = Path.GetFileName(projPath);
 
+                    int pCaptured = p;
                     Action<int, int, string, int> progressCb = (current, total, file, count) =>
                     {
-                        int overallPct = (int)(((double)p / totalProjects + (double)current / total / totalProjects) * 100);
+                        int overallPct = (int)(((double)pCaptured / totalProjects + (double)current / total / totalProjects) * 100);
                         string fileTag = string.IsNullOrEmpty(file) ? "" : Path.GetFileName(file);
-                        string msg = string.Format("[{0}] [{1}/{2}] {3} - {4}",
-                            modeLabel, p + 1, totalProjects, projName, fileTag);
+                        string prefix = (_cancelMode != 0) ? "[중지 중...] " : "";
+                        string msg = string.Format("{0}[{1}] [{2}/{3}] {4} - {5}",
+                            prefix, modeLabel, pCaptured + 1, totalProjects, projName, fileTag);
                         worker.ReportProgress(Math.Min(overallPct, 100), msg);
                     };
 
                     List<Finding> findings;
                     if (useLLMLocal)
                     {
-                        var llm = new LLMAnalyzer(llmConfigLocal);
-                        findings = llm.AnalyzeDirectory(projPath, progressCb);
+                        LLMAnalyzer llm = new LLMAnalyzer(llmConfigLocal);
+                        _activeLLM = llm;
+                        try
+                        {
+                            findings = llm.AnalyzeDirectory(projPath, progressCb, isCancelRequested);
+                        }
+                        finally
+                        {
+                            _activeLLM = null;
+                        }
                     }
                     else
                     {
-                        findings = _analyzer.AnalyzeDirectory(projPath, progressCb);
+                        findings = _analyzer.AnalyzeDirectory(projPath, progressCb, isCancelRequested);
                     }
 
                     // 각 Finding에 프로젝트명 태깅 (FilePath에서 유추)
@@ -702,10 +749,18 @@ namespace CodeInspect
 
                     allFindings.AddRange(findings);
 
-                    // 프로젝트별 로그 저장
+                    // 프로젝트별 로그 저장 (부분 결과도 보존)
                     string projLogDir = Path.Combine(_logDir, projName);
                     LogWriter.WriteCommitLog(findings, projLogDir, projPath);
                     LogWriter.WriteCsvLog(findings, projLogDir, projPath);
+
+                    completedProjects++;
+
+                    // "현재 프로젝트만 건너뛰기" — 모드 리셋 후 다음 프로젝트로 진행
+                    if (_cancelMode == 1)
+                    {
+                        _cancelMode = 0;
+                    }
                 }
 
                 // 통합 로그도 저장
@@ -726,8 +781,18 @@ namespace CodeInspect
 
             worker.RunWorkerCompleted += (ws, we) =>
             {
+                bool wasCancelled = (_cancelMode != 0) || we.Cancelled;
+
                 btnAnalyzeSelected.Enabled = true;
                 btnAnalyzeAll.Enabled = true;
+                btnCancelAnalysis.Enabled = false;
+                btnCancelAnalysis.Text = "■ 분석 중지";
+
+                // 상태 초기화
+                _cancelMode = 0;
+                _worker = null;
+                _activeLLM = null;
+                _currentProjectPaths = null;
 
                 if (we.Error != null)
                 {
@@ -739,18 +804,143 @@ namespace CodeInspect
                 }
 
                 _findings = (List<Finding>)we.Result;
-                progressBar.Value = 100;
+                if (_findings == null) _findings = new List<Finding>();
 
                 lblLogDir.Text = "로그 폴더 열기";
                 UpdateProjectFilter();
                 ApplyFilters();
                 UpdateSummary();
 
-                lblStatus.Text = string.Format("{0} 분석 완료 - {1}개 프로젝트, {2}건 검출",
-                    modeLabel, projectPaths.Count, _findings.Count);
+                if (wasCancelled)
+                {
+                    lblStatus.Text = string.Format("{0} 분석 중지됨 - {1}개 중 {2}개 진행, {3}건 검출",
+                        modeLabel, totalProjects, completedProjects, _findings.Count);
+                }
+                else
+                {
+                    progressBar.Value = 100;
+                    lblStatus.Text = string.Format("{0} 분석 완료 - {1}개 프로젝트, {2}건 검출",
+                        modeLabel, projectPaths.Count, _findings.Count);
+                }
             };
 
             worker.RunWorkerAsync();
+        }
+
+        // ════════════════════════════════════════
+        //  분석 중지 핸들러
+        // ════════════════════════════════════════
+        private void BtnCancelAnalysis_Click(object sender, EventArgs e)
+        {
+            // 가드: 진행 중인 분석이 없으면 무시
+            if (_worker == null || !_worker.IsBusy)
+            {
+                btnCancelAnalysis.Enabled = false;
+                return;
+            }
+
+            int chosenMode; // 1=ProjectOnly, 2=All, 0=취소(아무것도 안 함)
+            int projCount = (_currentProjectPaths != null) ? _currentProjectPaths.Count : 0;
+
+            if (projCount > 1)
+            {
+                chosenMode = ShowMultiProjectCancelDialog();
+            }
+            else
+            {
+                DialogResult r = MessageBox.Show(this,
+                    "현재 분석을 중지하시겠습니까?",
+                    "분석 중지 확인",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+                chosenMode = (r == DialogResult.Yes) ? 2 : 0;
+            }
+
+            if (chosenMode == 0) return; // 사용자가 "계속 분석" 선택
+
+            _cancelMode = chosenMode;
+
+            if (chosenMode == 2)
+            {
+                // 전체 중지 — 워커 취소 + 진행 중 LLM HTTP 호출 즉시 Abort
+                if (_worker != null) { try { _worker.CancelAsync(); } catch { } }
+                if (_activeLLM != null) { try { _activeLLM.Cancel(); } catch { } }
+                btnCancelAnalysis.Text = "중지 처리 중...";
+                btnCancelAnalysis.Enabled = false;
+            }
+            else
+            {
+                // 현재 프로젝트만 건너뛰기 — 진행 중 LLM HTTP 호출도 끊어 즉시 다음 프로젝트로
+                if (_activeLLM != null) { try { _activeLLM.Cancel(); } catch { } }
+                btnCancelAnalysis.Text = "건너뛰는 중...";
+                btnCancelAnalysis.Enabled = false;
+            }
+        }
+
+        // 다건 분석용 3-버튼 다이얼로그 — 1=ProjectOnly, 2=All, 0=Continue
+        private int ShowMultiProjectCancelDialog()
+        {
+            using (Form dlg = new Form())
+            {
+                dlg.Text = "분석 중지 - 다중 프로젝트";
+                dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+                dlg.StartPosition = FormStartPosition.CenterParent;
+                dlg.MaximizeBox = false;
+                dlg.MinimizeBox = false;
+                dlg.ShowInTaskbar = false;
+                dlg.Size = new Size(420, 180);
+                dlg.Font = new Font("맑은 고딕", 9F);
+
+                Label lbl = new Label
+                {
+                    Text = "다중 프로젝트 분석이 진행 중입니다.\n어떻게 처리할까요?",
+                    Location = new Point(15, 15),
+                    Size = new Size(380, 50),
+                    Font = new Font("맑은 고딕", 9.5F)
+                };
+
+                Button btnSkip = new Button
+                {
+                    Text = "현재 프로젝트만 건너뛰기",
+                    Location = new Point(15, 80),
+                    Size = new Size(170, 36),
+                    BackColor = Color.FromArgb(255, 193, 7),
+                    ForeColor = Color.Black,
+                    FlatStyle = FlatStyle.Flat,
+                    DialogResult = DialogResult.Yes
+                };
+
+                Button btnAll = new Button
+                {
+                    Text = "전체 분석 중지",
+                    Location = new Point(195, 80),
+                    Size = new Size(110, 36),
+                    BackColor = Color.FromArgb(220, 53, 69),
+                    ForeColor = Color.White,
+                    FlatStyle = FlatStyle.Flat,
+                    DialogResult = DialogResult.No
+                };
+
+                Button btnContinue = new Button
+                {
+                    Text = "계속 분석",
+                    Location = new Point(315, 80),
+                    Size = new Size(80, 36),
+                    BackColor = Color.FromArgb(108, 117, 125),
+                    ForeColor = Color.White,
+                    FlatStyle = FlatStyle.Flat,
+                    DialogResult = DialogResult.Cancel
+                };
+
+                dlg.Controls.AddRange(new Control[] { lbl, btnSkip, btnAll, btnContinue });
+                dlg.AcceptButton = btnContinue;
+                dlg.CancelButton = btnContinue;
+
+                DialogResult res = dlg.ShowDialog(this);
+                if (res == DialogResult.Yes) return 1;
+                if (res == DialogResult.No) return 2;
+                return 0;
+            }
         }
 
         // ════════════════════════════════════════

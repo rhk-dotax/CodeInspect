@@ -91,6 +91,12 @@ namespace CodeInspect
         /// <summary>디렉토리 전체 분석</summary>
         public List<Finding> AnalyzeDirectory(string directory, Action<int, int, string, int> progress = null)
         {
+            return AnalyzeDirectory(directory, progress, null);
+        }
+
+        /// <summary>디렉토리 전체 분석 (취소 콜백 지원)</summary>
+        public List<Finding> AnalyzeDirectory(string directory, Action<int, int, string, int> progress, Func<bool> isCancelRequested)
+        {
             var allFindings = new List<Finding>();
             var targetExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var kv in VulnerabilityRules.LanguageExtensions)
@@ -103,6 +109,7 @@ namespace CodeInspect
 
             for (int i = 0; i < total; i++)
             {
+                if (isCancelRequested != null && isCancelRequested()) break;
                 var findings = AnalyzeFile(files[i]);
                 allFindings.AddRange(findings);
                 if (progress != null) progress(i + 1, total, files[i], findings.Count);

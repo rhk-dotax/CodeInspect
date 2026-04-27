@@ -218,6 +218,57 @@ Windows 오프라인(폐쇄망) 환경에서 설치 없이 동작하는 소스�
 
 **C# 5 호환성**: `$""`, `?.`, pattern matching, `out var`, `nameof`, auto-property initializer 미사용. `BackgroundWorker` 패턴 유지(async/await 미사용).
 
+### v1.4 — 분석 중지 기능 (2026-04-27)
+**배경**: v1.3에서 LLM 모드를 추가하면서 파일당 응답 대기가 수십 초 ~ 타임아웃까지 걸릴 수 있게 됐고, 다중 프로젝트 일괄 분석에서 첫 프로젝트가 너무 오래 걸려도 멈출 수단이 없었음. BackgroundWorker는 이미 사용 중이었으나 `WorkerSupportsCancellation = false`였고 `CancelAsync()`/`CancellationPending`도 활용되지 않았음.
+
+- **`MainForm.cs` 수정**
+  - 신규 필드: `btnCancelAnalysis`, `volatile int _cancelMode` (0=None / 1=ProjectOnly / 2=All), `BackgroundWorker _worker`(로컬 변수에서 클래스 필드로 승격), `LLMAnalyzer _activeLLM`(진행 중 LLM 인스턴스 캐싱), `List<string> _currentProjectPaths`
+  - 좌측 패널에 "■ 분석 중지" 버튼 추가 (`btnAnalyzeAll` 바로 아래, 주황색 `Color.FromArgb(255, 87, 34)`, 초기 `Enabled=false`). 후속 컨트롤(separator2 / Git Hook / LLM / 룰셋 섹션) 좌표를 +36 이동
+  - `RunAnalysis(...)` 변경 — `_worker`를 필드로 보관, `WorkerSupportsCancellation = true`, `_cancelMode = 0`로 초기화, `_currentProjectPaths` 저장. 시작 시 `btnCancelAnalysis.Enabled = true`
+  - 분석기에 전달할 취소 콜백 `Func<bool> isCancelRequested = delegate() { return _cancelMode != 0 || worker.CancellationPending; };`
+  - 프로젝트 루프 시작부에 `if (_cancelMode == 2) break;` (전체 중지), 프로젝트 종료 후 `if (_cancelMode == 1) _cancelMode = 0;` (현재 프로젝트만 건너뛰기)
+  - LLM 분기: `_activeLLM = new LLMAnalyzer(...); try { ... } finally { _activeLLM = null; }`
+  - `progressCb` 람다: `_cancelMode != 0`이면 `"[중지 중...] "` prefix
+  - `RunWorkerCompleted`: 취소 케이스에 `"분석 중지됨 - {total}개 중 {completed}개 진행, {findings.Count}건 검출"` 메시지, 상태 필드 모두 초기화
+  - 신규 핸들러 `BtnCancelAnalysis_Click(...)`:
+    - `_worker == null || !_worker.IsBusy` 가드
+    - 다중 프로젝트면 `ShowMultiProjectCancelDialog()` (3-버튼 다이얼로그), 단건이면 `MessageBox.Show(YesNo)`
+    - 결정 모드를 `_cancelMode`에 set, 전체 중지면 `_worker.CancelAsync()` + `_activeLLM.Cancel()`, 현재 프로젝트만 건너뛰기도 LLM HTTP 호출 끊기 위해 `_activeLLM.Cancel()` 호출
+    - 버튼 텍스트를 "중지 처리 중..." / "건너뛰는 중..."으로 변경 후 disable
+  - 신규 메서드 `ShowMultiProjectCancelDialog()` — 즉석 `Form` 으로 3-버튼 다이얼로그 구성("현재 프로젝트만 건너뛰기" / "전체 분석 중지" / "계속 분석"). 신규 `.cs` 파일 추가 없이 `MainForm` 내부에 구현 → `build.rsp` 갱신 불필요
+  - 폼 타이틀 v1.3 → v1.4
+
+- **`Analyzer.cs` 수정**
+  - `CodeAnalyzer.AnalyzeDirectory`에 신규 오버로드 추가:
+    `public List<Finding> AnalyzeDirectory(string directory, Action<int,int,string,int> progress, Func<bool> isCancelRequested)`
+  - 파일 루프 진입부에 `if (isCancelRequested != null && isCancelRequested()) break;`
+  - 기존 1-인자 오버로드는 신규에 `null` 위임 → `Program.cs --hook` 모드 호환성 유지
+
+- **`LLMAnalyzer.cs` 수정**
+  - 신규 필드: `private volatile bool _cancelRequested;`, `private HttpWebRequest _currentRequest;`
+  - 신규 public 메서드 `Cancel()` — `_cancelRequested = true; _currentRequest?.Abort()`. C# 5 제약상 null 검사 명시 + try/catch 무시
+  - `HttpPost`를 `static` → 인스턴스 메서드로 변경. 진행 중 `HttpWebRequest`를 `_currentRequest`에 보관 → `try ... finally { _currentRequest = null; }`로 정리. WebException 발생 시 `_cancelRequested == true`면 본문 디버깅 로직 건너뛰고 그대로 throw하여 호출자에서 silent 처리
+  - `AnalyzeFile`의 `catch (Exception ex)` 블록(HTTP 실패 처리부)에서 `if (_cancelRequested) return new List<Finding>();` 가드 추가 → ErrorLogger 호출 생략
+  - `AnalyzeDirectory`에 신규 오버로드 추가(시그니처 동일). 파일 루프 진입부에서 외부 콜백 + `_cancelRequested` 모두 체크
+
+- **HTTP 인터럽트 동작 원리**
+  - 사용자 "전체 중지" 또는 "현재 프로젝트만" 선택 시 `_activeLLM.Cancel()` 호출 → 진행 중 `HttpWebRequest.Abort()` 즉시 발동 → `WebException` (status `RequestCanceled`) 발생 → `HttpPost`/`AnalyzeFile`이 `_cancelRequested` 검사 후 silent 반환 → 다음 파일/프로젝트 루프 진입 시 취소 체크에 의해 break
+  - 클라이언트 응답성: Ollama/LM Studio 응답 대기 중에도 1~2초 이내 반응
+
+- **부분 결과 보존**
+  - 취소 시점까지 누적된 `findings`는 `we.Result = allFindings;`로 그대로 전달
+  - 프로젝트별 로그(`LogWriter.WriteCommitLog/WriteCsvLog`)도 부분 결과로 기록됨
+  - DataGridView/요약 패널 모두 부분 결과로 갱신
+
+- **Git hook 모드 호환성**
+  - `Program.cs --hook` 모드는 1-인자 `AnalyzeDirectory(dir, progress)` 또는 `AnalyzeFiles(files, progress)`만 사용 → 신규 오버로드는 옵션이므로 영향 없음. 회귀 검증 통과
+
+- **검증**
+  - `csc.exe @build.rsp` exit 0, **경고 0건** (`volatile int` + `Interlocked.Exchange(ref ...)` 조합 시 발생하던 CS0420 경고는 `Interlocked` 호출을 단순 대입 `_cancelMode = X;`로 교체하여 해결. `volatile`만으로 워커-UI 스레드 간 가시성 확보)
+  - EXE 130KB → 133KB
+
+**C# 5 호환성**: `?.`, `$""`, pattern matching, `out var`, `nameof`, auto-property initializer 미사용. `volatile`, `Func<bool>`, 익명 메서드(`delegate() { ... }`), `MessageBox`, 즉석 `Form` 모두 C# 5/.NET Framework 4.0+에서 정상 동작.
+
 ---
 
 ## 현재 파일 구조
@@ -228,11 +279,11 @@ codeinspect/
 ├── RuleStore.cs             # 외부 파일 기반 룰셋 저장소 (v0.9~) + ApplyPack (v0.10~)
 ├── RulePacks.cs             # 내장 룰팩: Semgrep/OWASP ASVS (v0.10~)
 ├── RulesEditorForm.cs       # 룰셋 관리/편집/업데이트 UI (v0.9~) + 출처 컬럼 (v0.10~)
-├── Analyzer.cs              # 분석 엔진 + 로그 기록
-├── MainForm.cs              # WinForms GUI (멀티 프로젝트 + 룰셋 + LLM 옵션 v1.3~)
+├── Analyzer.cs              # 분석 엔진 + 로그 기록 (취소 콜백 오버로드 v1.4~)
+├── MainForm.cs              # WinForms GUI (멀티 프로젝트 + 룰셋 + LLM 옵션 v1.3~ + 분석 중지 v1.4~)
 ├── Program.cs               # 엔트리포인트 (GUI/Hook 듀얼 모드) + 전역 예외 훅 (v0.11~)
 ├── ErrorLogger.cs           # 실행 디렉토리에 yyyy-MM-dd-HH-mm-ss.log 기록 (v0.11~)
-├── LLMAnalyzer.cs           # LLM(Ollama/LM Studio) 분석 엔진 + LLMConfig (v1.3~)
+├── LLMAnalyzer.cs           # LLM(Ollama/LM Studio) 분석 엔진 + LLMConfig (v1.3~) + Cancel/HTTP Abort (v1.4~)
 ├── LLMConfigForm.cs         # LLM 모델/엔드포인트 설정 다이얼로그 (v1.3~)
 ├── build.bat                # 빌드 런처
 ├── build.rsp                # csc.exe 옵션 파일
