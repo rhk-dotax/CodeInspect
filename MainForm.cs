@@ -86,7 +86,7 @@ namespace CodeInspect
 
         private void InitializeComponent()
         {
-            this.Text = "CodeInspect - 코드 취약점 분석기 v1.4";
+            this.Text = "CodeInspect - 코드 취약점 분석기 v1.5";
             this.Size = new Size(1300, 1020);
             this.MinimumSize = new Size(1000, 880);
             this.StartPosition = FormStartPosition.CenterScreen;
@@ -477,6 +477,12 @@ namespace CodeInspect
             dgvResults.Columns.Add(new DataGridViewTextBoxColumn { Name = "Code", HeaderText = "검출코드", Width = 220 });
 
             dgvResults.CellFormatting += DgvResults_CellFormatting;
+            dgvResults.CellDoubleClick += DgvResults_CellDoubleClick;
+
+            // 사용자에게 더블클릭으로 파일 열기 가능함을 안내하는 툴팁
+            var dgvTip = new ToolTip();
+            dgvTip.SetToolTip(dgvResults, "행을 더블클릭하면 검출 파일을 해당 라인에서 엽니다 (VS Code → Notepad++ → 메모장 순)");
+
             this.Controls.Add(dgvResults);
 
             // 하단 상태바
@@ -1432,6 +1438,104 @@ exit 0
                     e.CellStyle.BackColor = Color.FromArgb(224, 224, 224);
                     e.CellStyle.ForeColor = Color.Black;
                     break;
+            }
+        }
+
+        // ════════════════════════════════════════
+        //  결과 행 더블클릭 → 파일/라인 이동
+        // ════════════════════════════════════════
+
+        private void DgvResults_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0) return;
+            if (_filteredFindings == null || e.RowIndex >= _filteredFindings.Count) return;
+
+            Finding f = _filteredFindings[e.RowIndex];
+            if (f == null) return;
+
+            string filePath = f.FilePath;
+            int lineNumber = f.LineNumber > 0 ? f.LineNumber : 1;
+
+            if (string.IsNullOrEmpty(filePath))
+            {
+                MessageBox.Show("파일 경로가 비어 있어 열 수 없습니다.", "알림",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (!File.Exists(filePath))
+            {
+                MessageBox.Show("파일을 찾을 수 없습니다:\n" + filePath, "알림",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            OpenInExternalEditor(filePath, lineNumber);
+        }
+
+        /// <summary>VS Code → Notepad++ → 메모장 순서로 시도해서 파일을 라인 위치에서 연다.</summary>
+        private void OpenInExternalEditor(string filePath, int lineNumber)
+        {
+            // 1) VS Code (PATH에 'code' 또는 'code.cmd'가 있을 때)
+            //    -g "file:line"  → 해당 라인으로 이동. UseShellExecute=true로 .cmd 해석 가능
+            string vsArgs = "-g \"" + filePath + ":" + lineNumber + "\"";
+            if (TryStartProcess("code", vsArgs, true))
+            {
+                lblStatus.Text = string.Format("VS Code에서 열림: {0} (라인 {1})",
+                    Path.GetFileName(filePath), lineNumber);
+                return;
+            }
+
+            // 2) Notepad++ (일반적인 설치 경로)
+            string[] nppPaths = new string[] {
+                @"C:\Program Files\Notepad++\notepad++.exe",
+                @"C:\Program Files (x86)\Notepad++\notepad++.exe"
+            };
+            foreach (string nppPath in nppPaths)
+            {
+                if (File.Exists(nppPath))
+                {
+                    string nppArgs = "-n" + lineNumber + " \"" + filePath + "\"";
+                    if (TryStartProcess(nppPath, nppArgs, false))
+                    {
+                        lblStatus.Text = string.Format("Notepad++에서 열림: {0} (라인 {1})",
+                            Path.GetFileName(filePath), lineNumber);
+                        return;
+                    }
+                }
+            }
+
+            // 3) Fallback - 기본 메모장 (라인 점프 미지원, 안내만 표시)
+            try
+            {
+                System.Diagnostics.Process.Start("notepad.exe", "\"" + filePath + "\"");
+                lblStatus.Text = string.Format("메모장에서 열림: {0} - 라인 {1}로 직접 이동해주세요",
+                    Path.GetFileName(filePath), lineNumber);
+            }
+            catch (Exception ex)
+            {
+                ErrorLogger.Log(ex, "MainForm.OpenInExternalEditor (notepad fallback)");
+                MessageBox.Show("파일을 열 수 없습니다: " + ex.Message, "오류",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private bool TryStartProcess(string fileName, string arguments, bool useShellExecute)
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo();
+                psi.FileName = fileName;
+                psi.Arguments = arguments;
+                psi.UseShellExecute = useShellExecute;
+                if (!useShellExecute) psi.CreateNoWindow = true;
+                System.Diagnostics.Process.Start(psi);
+                return true;
+            }
+            catch
+            {
+                // 실행 파일 미존재(Win32Exception 1, 2 등) → 다음 후보로 fallback
+                return false;
             }
         }
 

@@ -269,6 +269,42 @@ Windows 오프라인(폐쇄망) 환경에서 설치 없이 동작하는 소스�
 
 **C# 5 호환성**: `?.`, `$""`, pattern matching, `out var`, `nameof`, auto-property initializer 미사용. `volatile`, `Func<bool>`, 익명 메서드(`delegate() { ... }`), `MessageBox`, 즉석 `Form` 모두 C# 5/.NET Framework 4.0+에서 정상 동작.
 
+### v1.5 — 검출 결과 더블클릭으로 파일/라인 점프 (2026-04-28)
+**배경**: 분석 결과 그리드에서 검출된 라인을 빠르게 확인하려면 그동안 사용자가 직접 파일을 찾아 열어야 했음. 사용성을 높이기 위해 행 더블클릭으로 외부 편집기에서 해당 라인이 자동으로 열리도록 개선. 폐쇄망/무설치 전제는 유지하되, 사용자 환경에 맞춰 사용 가능한 편집기를 자동 선택.
+
+- **`MainForm.cs` 수정**
+  - `dgvResults`에 `CellDoubleClick += DgvResults_CellDoubleClick` 이벤트 등록
+  - 그리드 위에 `ToolTip`으로 "행을 더블클릭하면 검출 파일을 해당 라인에서 엽니다" 안내 추가
+  - 신규 핸들러 `DgvResults_CellDoubleClick(...)`:
+    - `e.RowIndex < 0` (헤더) 가드 + `_filteredFindings` 범위 가드
+    - `_filteredFindings[e.RowIndex]`에서 `Finding`을 가져와 `FilePath` / `LineNumber` 추출 (그리드 표시용 상대 경로가 아닌 원본 절대 경로 사용)
+    - 파일이 존재하지 않으면 안내 메시지(이동된 결과 사용 시 발생 가능)
+    - `OpenInExternalEditor(filePath, lineNumber)` 호출
+  - 신규 메서드 `OpenInExternalEditor(...)` — fallback 체인:
+    1. **VS Code** — `code -g "file:line"`. PATH에서 `code.cmd`도 해석되도록 `UseShellExecute = true`. PATH에 없으면 `Win32Exception` 발생 → 다음 후보로 진행
+    2. **Notepad++** — `C:\Program Files\Notepad++\notepad++.exe` 또는 `Program Files (x86)`에서 `File.Exists` 확인 후 `-n<line> "file"` 옵션으로 해당 라인 점프
+    3. **메모장** — 최종 fallback. 라인 점프 미지원이므로 상태바에 "라인 N로 직접 이동해주세요" 안내
+  - 신규 헬퍼 `TryStartProcess(fileName, arguments, useShellExecute)` — 실행 실패 시 `false` 반환, fallback 체인에서 활용
+  - 폼 타이틀 v1.4 → v1.5
+
+- **`build.rsp` 변경 없음** — 신규 .cs 파일 추가 없음(MainForm 내부에 메서드 추가)
+
+- **에디터 인자 형식**
+  - VS Code: `-g <path>:<line>` (Goto 형식, 0-base가 아닌 1-base)
+  - Notepad++: `-n<line> <path>` (라인 번호는 옵션과 붙여서 작성)
+  - 메모장: 라인 인자 미지원 → 안내 메시지로 대체
+
+- **결과 행 → Finding 매핑**
+  - `_filteredFindings`는 `PopulateGrid`에서 그리드와 동일한 순서로 채워지므로 `e.RowIndex == _filteredFindings`의 인덱스
+  - 그리드 표시용 상대 경로(`fileDisplay`)가 아니라 `Finding.FilePath`(절대 경로)를 사용 → 어떤 작업 디렉토리에서도 정확히 열림
+
+- **검증**
+  - `csc.exe @build.rsp` exit 0, **경고 0건**
+  - EXE 133KB → 132KB 수준 유지(135168 bytes)
+  - C# 5 호환성: `$""`, `?.`, pattern matching, `out var`, `nameof`, auto-property initializer 미사용. `Process.Start` / `ProcessStartInfo` / `ToolTip` / `DataGridView.CellDoubleClick` 모두 .NET Framework 4.0+ 표준
+
+**C# 5 호환성**: 모든 추가 코드에서 금지 기능 미사용. 빌드 경고 0건.
+
 ---
 
 ## 현재 파일 구조
@@ -280,7 +316,7 @@ codeinspect/
 ├── RulePacks.cs             # 내장 룰팩: Semgrep/OWASP ASVS (v0.10~)
 ├── RulesEditorForm.cs       # 룰셋 관리/편집/업데이트 UI (v0.9~) + 출처 컬럼 (v0.10~)
 ├── Analyzer.cs              # 분석 엔진 + 로그 기록 (취소 콜백 오버로드 v1.4~)
-├── MainForm.cs              # WinForms GUI (멀티 프로젝트 + 룰셋 + LLM 옵션 v1.3~ + 분석 중지 v1.4~)
+├── MainForm.cs              # WinForms GUI (멀티 프로젝트 + 룰셋 + LLM 옵션 v1.3~ + 분석 중지 v1.4~ + 더블클릭 파일 열기 v1.5~)
 ├── Program.cs               # 엔트리포인트 (GUI/Hook 듀얼 모드) + 전역 예외 훅 (v0.11~)
 ├── ErrorLogger.cs           # 실행 디렉토리에 yyyy-MM-dd-HH-mm-ss.log 기록 (v0.11~)
 ├── LLMAnalyzer.cs           # LLM(Ollama/LM Studio) 분석 엔진 + LLMConfig (v1.3~) + Cancel/HTTP Abort (v1.4~)
