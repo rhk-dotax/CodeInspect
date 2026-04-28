@@ -18,3 +18,4 @@ RulesEditorForm.cs
 ErrorLogger.cs
 LLMAnalyzer.cs
 LLMConfigForm.cs
+LogDeleteForm.cs

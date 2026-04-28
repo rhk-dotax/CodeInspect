@@ -26,6 +26,9 @@ namespace CodeInspect
         private Label lblRuleCount;
         private Label lblProjectCount;
 
+        // ── 상단 우측 ──
+        private Button btnDeleteLogs;
+
         // ── LLM 분석 패널 ──
         private CheckBox chkUseLLM;
         private Button btnLLMConfig;
@@ -86,7 +89,7 @@ namespace CodeInspect
 
         private void InitializeComponent()
         {
-            this.Text = "CodeInspect - 코드 취약점 분석기 v1.5";
+            this.Text = "CodeInspect - 코드 취약점 분석기 v1.6";
             this.Size = new Size(1300, 1020);
             this.MinimumSize = new Size(1000, 880);
             this.StartPosition = FormStartPosition.CenterScreen;
@@ -113,10 +116,27 @@ namespace CodeInspect
                 ForeColor = Color.FromArgb(173, 181, 189),
                 Dock = DockStyle.Right,
                 AutoSize = false,
-                Width = 400,
+                Width = 320,
                 TextAlign = ContentAlignment.MiddleRight
             };
-            pnlTitle.Controls.AddRange(new Control[] { lblTitle, lblSubTitle });
+
+            btnDeleteLogs = new Button
+            {
+                Text = "🗑 로그 삭제",
+                Dock = DockStyle.Right,
+                Width = 110,
+                BackColor = Color.FromArgb(108, 117, 125),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("맑은 고딕", 9F),
+                Margin = new Padding(0)
+            };
+            btnDeleteLogs.FlatAppearance.BorderSize = 0;
+            btnDeleteLogs.Click += BtnDeleteLogs_Click;
+
+            // Dock=Right 컨트롤은 Controls에 나중에 추가될수록 우측 모서리에 가까이 도킹됨.
+            // 따라서 btnDeleteLogs를 마지막에 추가해 우측 끝에 배치.
+            pnlTitle.Controls.AddRange(new Control[] { lblTitle, lblSubTitle, btnDeleteLogs });
             this.Controls.Add(pnlTitle);
 
             // ════════════════════════════════════════
@@ -970,6 +990,20 @@ namespace CodeInspect
                 dlg.ShowDialog(this);
             }
             UpdateLLMStatusLabel();
+        }
+
+        private void BtnDeleteLogs_Click(object sender, EventArgs e)
+        {
+            var projectPaths = new List<string>();
+            foreach (var item in lstProjects.Items)
+            {
+                if (item != null) projectPaths.Add(item.ToString());
+            }
+
+            using (var dlg = new LogDeleteForm(_logDir, projectPaths))
+            {
+                dlg.ShowDialog(this);
+            }
         }
 
         private void UpdateLLMStatusLabel()

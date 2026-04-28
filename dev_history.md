@@ -305,6 +305,63 @@ Windows 오프라인(폐쇄망) 환경에서 설치 없이 동작하는 소스�
 
 **C# 5 호환성**: 모든 추가 코드에서 금지 기능 미사용. 빌드 경고 0건.
 
+### v1.6 — 로그 삭제 기능 (2026-04-28)
+**배경**: 분석을 반복할수록 `codeinspect_logs/<프로젝트명>/` 하위에 `commit_vuln_*.log` / `vuln_report_*.csv`가 무한히 누적되어 디스크 공간을 차지하고, 사용자가 수동으로 정리하지 않으면 오래된 로그가 그대로 남는 문제가 있었음. 이를 해결하기 위해 메인 화면에 진입점 버튼을 추가하고, 수동 일괄/프로젝트별 삭제와 더불어 프로젝트별 자동 보존 주기(일 단위, 0=미삭제) 및 시작 시 자동 퍼지 기능을 도입.
+
+- **신규 파일 `LogDeleteForm.cs`** (한 파일에 3개 클래스, `LLMAnalyzer.cs`의 `LLMConfig` + `LLMAnalyzer` 동거 패턴 모방)
+  - `LogRetentionConfig` static — `codeinspect_rules/log_retention.txt`에 보존 주기 영속. 포맷: `project|<프로젝트절대경로>|<일수>` (Windows 경로엔 `|`가 들어갈 수 없어 충돌 위험 0). 주석 `#`, UTF-8 BOM 없음. `Dictionary<string,int> LoadMap()` / `Save(Dictionary<string,int>)` 두 API.
+  - `LogCleaner` static — 4개 메서드:
+    - `string GetProjectLogFolderName(string)`: `Path.GetFileName(projectPath.TrimEnd('\\','/'))` — `MainForm.RunAnalysis`의 `projLogDir` 매핑과 정확히 동일.
+    - `int DeleteAll(string logRootDir)`: 루트 내 모든 파일 + 하위 폴더 재귀 삭제(루트 폴더 자체는 유지). 개별 실패는 `ErrorLogger.Log` 후 계속.
+    - `int DeleteProjectLogs(string logRootDir, string projectPath)`: 해당 프로젝트 서브폴더 안 모든 파일만 삭제(폴더 유지).
+    - `int CountProjectLogFiles(string logRootDir, string projectPath)`: 그리드의 "파일 수" 컬럼 표시 + "선택 프로젝트 로그 삭제" 버튼 활성 판정.
+    - `int PurgeExpiredOnStartup()`: `Application.StartupPath`로 `log_retention.txt` 로드, `days > 0`인 항목만 순회하며 `(DateTime.Now - File.GetLastWriteTime(f)).TotalDays > days`인 파일만 `File.Delete`. 다른 프로젝트와 통합 로그(루트 직접 파일)는 건드리지 않음.
+  - `LogDeleteForm : Form` (720×560, FixedDialog, CenterParent, MaximizeBox/MinimizeBox 비활성):
+    - 상단 안내 라벨 "로그 폴더: {logDir}".
+    - 그룹박스 ① 전체 로그 삭제 — 빨강 "전체 삭제" 버튼 + YesNo 재확인.
+    - 그룹박스 ② 프로젝트별 로그 관리 — `DataGridView` 3컬럼(프로젝트 경로 read-only 420px, 삭제주기(일) 편집가능 110px, 파일 수 read-only 90px), 인라인 편집 종료 시 정수 0 이상 검증(비정상 → 0). 우측 하단 "선택 프로젝트 로그 삭제" 버튼은 행 선택 + 파일 1개 이상일 때만 활성.
+    - 그 아래 "일괄 적용 주기(일)" `NumericUpDown`(0~3650) + "전체 일괄 적용" 버튼 — 메모리상 모든 행의 일수를 일괄 변경(저장은 [확인] 버튼).
+    - 하단 "확인 (저장)" / "취소". 저장 시 그리드 → `Dictionary<projectPath,int>` → `LogRetentionConfig.Save`. 더 이상 `codeinspect_projects.txt`에 없는 옛 항목은 자연 제거됨.
+
+- **`MainForm.cs` 수정**
+  - 신규 필드 `private Button btnDeleteLogs;`
+  - 타이틀 패널 (`pnlTitle`) 우측 상단에 버튼 추가:
+    - 기존 `lblSubTitle.Width` 400 → 320으로 축소
+    - `btnDeleteLogs` Dock=Right, Width=110, BackColor `Color.FromArgb(108, 117, 125)`, Text "🗑 로그 삭제"
+    - `pnlTitle.Controls.AddRange(new Control[] { lblTitle, lblSubTitle, btnDeleteLogs })` — WinForms Dock 규칙상 같은 `DockStyle.Right`에서 늦게 추가된 컨트롤이 우측 모서리에 가까이 도킹되므로 `btnDeleteLogs`가 우측 끝에 위치, 그 좌측에 `lblSubTitle`.
+  - 신규 핸들러 `BtnDeleteLogs_Click(...)` — `lstProjects.Items`로부터 프로젝트 경로 리스트를 만들어 `new LogDeleteForm(_logDir, projectPaths).ShowDialog(this)` 호출.
+  - 폼 타이틀 v1.5 → v1.6.
+
+- **`Program.cs` 수정**
+  - `--hook` 분기 통과 후, `Application.EnableVisualStyles()` 직전에 `try { LogCleaner.PurgeExpiredOnStartup(); } catch (Exception exPurge) { ErrorLogger.Log(exPurge, "Program.Main / PurgeExpiredOnStartup"); }` 삽입 → GUI 모드에서만 자동 퍼지 실행. `--hook` 모드는 매 커밋마다 디스크 I/O 발생을 피하기 위해 우회.
+
+- **`build.rsp` 수정** — `LogDeleteForm.cs` 한 줄 추가.
+
+- **저장 포맷 예시** (`codeinspect_rules/log_retention.txt`)
+  ```
+  # CodeInspect 로그 자동 삭제 주기
+  # 단위: 일. 0이면 자동 삭제 안 함.
+  # 형식: project|<프로젝트절대경로>|<일수>
+  # 본 파일은 LogDeleteForm 다이얼로그에서 자동 생성/갱신됩니다.
+
+  project|C:\src\codex\aiocr\LocalOfflineOcr|7
+  project|C:\src\cursor\webview2|0
+  ```
+
+- **시작 퍼지 동작 원리**
+  - `Program.Main` → `LogCleaner.PurgeExpiredOnStartup()` → `LogRetentionConfig.LoadMap()` → 각 `(projectPath, days)` 조합에 대해 `days > 0` 항목만 처리.
+  - 프로젝트 로그 폴더 = `codeinspect_logs/<Path.GetFileName(projectPath.TrimEnd('\\','/'))>` (MainForm.RunAnalysis line 759와 동일 매핑).
+  - 폴더 내 파일을 재귀 순회하며 `File.GetLastWriteTime`이 기준일을 초과한 파일만 개별 `File.Delete`. 폴더 자체와 통합 로그(루트 직접 파일)는 보존.
+  - 어떤 단계에서든 예외 발생 시 `ErrorLogger.Log` 후 다음 항목/파일로 계속 진행 → 시작 자체는 절대 실패하지 않음.
+
+- **검증**
+  - `csc.exe @build.rsp` exit 0, **경고 0건**. EXE 132KB → 145KB.
+  - 시작 자동 삭제 시나리오: `LocalOfflineOcr|7` / `webview2|0` 설정에서 `LocalOfflineOcr/` 내 2개 파일을 30일 전으로 백데이트 → CodeInspect.exe 실행(3초 후 종료) → 백데이트 2개 파일만 정확히 삭제, 다른 최근 파일과 `webview2/` 전체는 모두 보존.
+  - Hook 모드 회귀: `LocalOfflineOcr/`에 30일 전 파일 1개를 추가 백데이트 → `CodeInspect.exe --hook /tmp/empty.txt /tmp` 실행(exit 0) → 해당 파일이 그대로 남아있음 → `--hook` 분기가 startup purge를 정상 우회.
+  - 통합 로그(루트 직접 파일 `codeinspect_logs/commit_vuln_*.log` 등)는 자동 퍼지 대상이 아니며, 다이얼로그의 "전체 삭제"로만 정리되도록 설계 — 다이얼로그 내 안내 라벨로 명시.
+
+- **C# 5 호환성**: `$""`, `?.`, pattern matching, `out var`, `nameof`, auto-property initializer 미사용. `Dictionary<string,int>(StringComparer.OrdinalIgnoreCase)` 익스플리싯 비교자, `int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out n)`, `delegate` 명시적 작성, `DataGridView` / `NumericUpDown` / `GroupBox` 모두 .NET Framework 4.0+ 표준 컴포넌트.
+
 ---
 
 ## 현재 파일 구조
@@ -316,11 +373,12 @@ codeinspect/
 ├── RulePacks.cs             # 내장 룰팩: Semgrep/OWASP ASVS (v0.10~)
 ├── RulesEditorForm.cs       # 룰셋 관리/편집/업데이트 UI (v0.9~) + 출처 컬럼 (v0.10~)
 ├── Analyzer.cs              # 분석 엔진 + 로그 기록 (취소 콜백 오버로드 v1.4~)
-├── MainForm.cs              # WinForms GUI (멀티 프로젝트 + 룰셋 + LLM 옵션 v1.3~ + 분석 중지 v1.4~ + 더블클릭 파일 열기 v1.5~)
-├── Program.cs               # 엔트리포인트 (GUI/Hook 듀얼 모드) + 전역 예외 훅 (v0.11~)
+├── MainForm.cs              # WinForms GUI (멀티 프로젝트 + 룰셋 + LLM 옵션 v1.3~ + 분석 중지 v1.4~ + 더블클릭 파일 열기 v1.5~ + 로그 삭제 진입 버튼 v1.6~)
+├── Program.cs               # 엔트리포인트 (GUI/Hook 듀얼 모드) + 전역 예외 훅 (v0.11~) + 시작 자동 퍼지 (v1.6~)
 ├── ErrorLogger.cs           # 실행 디렉토리에 yyyy-MM-dd-HH-mm-ss.log 기록 (v0.11~)
 ├── LLMAnalyzer.cs           # LLM(Ollama/LM Studio) 분석 엔진 + LLMConfig (v1.3~) + Cancel/HTTP Abort (v1.4~)
 ├── LLMConfigForm.cs         # LLM 모델/엔드포인트 설정 다이얼로그 (v1.3~)
+├── LogDeleteForm.cs         # 로그 삭제 다이얼로그 + LogRetentionConfig + LogCleaner (v1.6~)
 ├── build.bat                # 빌드 런처
 ├── build.rsp                # csc.exe 옵션 파일
 ├── install_hook.bat         # CLI hook 설치 스크립트
@@ -329,6 +387,7 @@ codeinspect/
 │   ├── rules.config         # 사용자 편집 가능 룰셋 파일
 │   ├── update_url.txt       # 다운로드 URL 저장
 │   ├── llm_config.txt       # LLM 분석 설정 (v1.3~)
+│   ├── log_retention.txt    # 프로젝트별 로그 자동 삭제 주기 (v1.6~)
 │   └── backup/              # 룰 변경 시 이전 버전 보관
 ├── codeinspect_projects.txt # 등록된 프로젝트 경로 목록
 ├── test_samples/            # 샘플 취약점 코드 (C/Java/C#)

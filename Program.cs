@@ -22,6 +22,10 @@ namespace CodeInspect
                     return RunHookMode(args);
                 }
 
+                // 시작 시 만료된 로그 자동 삭제 (실패해도 앱 시작은 계속)
+                try { LogCleaner.PurgeExpiredOnStartup(); }
+                catch (Exception exPurge) { ErrorLogger.Log(exPurge, "Program.Main / PurgeExpiredOnStartup"); }
+
                 // GUI 모드
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
