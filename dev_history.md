@@ -395,6 +395,38 @@ codeinspect/
 └── plan.md                  # 개발 계획
 ```
 
+### v1.6.1 — 분석 결과 UI 표시 수정 (2026-04-29)
+**배경**: 분석 완료 후 `dgvResults` DataGridView에 결과가 표시되지 않는 문제. `pnlSummary`(DockStyle.Top)와 `dgvResults`(DockStyle.Fill)가 모두 Form의 직접 자식으로 배치되어 있어 WinForms 도킹 레이아웃 순서 문제로 `dgvResults`의 가용 영역이 비정상적으로 축소됨.
+
+- **`MainForm.cs` 수정**
+  - 신규 로컬 변수 `pnlRight` (Panel, DockStyle.Fill) — `pnlSummary`와 `dgvResults`의 컨테이너. Form의 직접 자식에서 `pnlRight`의 자식으로 이동
+  - Form 직접 자식: `pnlTitle`(Top) → `pnlLeft`(Left) → `pnlBottom`(Bottom) → `pnlRight`(Fill, 나머지 영역)
+  - `pnlRight` 내부: `pnlSummary`(Top, H=60) → `dgvResults`(Fill)
+  - BringToFront 순서 재정렬: Form 레벨 4개 + pnlRight 내부 2개로 분리
+  - `PopulateGrid()`에 `SuspendLayout()`/`ResumeLayout()` 추가 — 대량 행 추가 시 렌더링 최적화
+
+- **빌드**: `csc.exe @build.rsp` exit 0, 경고 0건. `build.rsp` 변경 없음.
+
+### v1.6.3 — 좌측 패널 세로 스크롤 추가 (2026-04-29)
+**배경**: 폼 높이를 줄이면 좌측 프로젝트 관리 패널 하단의 버튼(룰셋 보기/업데이트 등)이 보이지 않고 접근할 수 없는 문제. 절대 위치 기반 컨트롤 배치라 자동 재배치되지 않음.
+
+- **`MainForm.cs` 수정**
+  - `pnlLeft`에 `AutoScroll = true` 추가 → 폼 높이가 컨텐츠보다 작을 때 자동으로 세로 스크롤바 표시
+  - `pnlLeft.Width` 310 → 327로 확장 (스크롤바 17px 폭 사전 확보) → 스크롤바가 나타나도 내부 컨트롤(Width=290)이 가로로 잘리거나 가로 스크롤바가 추가로 생기지 않음
+
+- **빌드**: `csc.exe @build.rsp` exit 0, 경고 0건.
+
+### v1.6.2 — UI 도킹 순서 버그 수정 (2026-04-29)
+**배경**: v1.6.1의 BringToFront 호출 순서가 반대로 되어 있어 실행 시 `pnlTitle`(타이틀바)이 좌측 패널 오른쪽 영역에만 표시되고 결과 영역과 겹쳐 보이는 문제 발생. WinForms는 높은 인덱스부터 처리하므로 `BringToFront`(인덱스 0으로 이동)는 마지막 호출된 컨트롤이 가장 늦게 처리됨. `pnlTitle.BringToFront()`를 마지막에 호출하면 인덱스 0이 되어 가장 늦게 처리되며, 그 시점엔 `pnlLeft`가 이미 좌측 전체 높이를 차지한 상태라 `pnlTitle`이 우측 영역에만 도킹됨.
+
+- **`MainForm.cs` 수정**
+  - BringToFront 순서를 역전: `pnlTitle` → `pnlBottom` → `pnlLeft` → `pnlRight` 순으로 호출
+  - 결과: `pnlTitle`이 가장 높은 인덱스(가장 먼저 처리)되어 전체 폭의 상단 40px를 정상적으로 차지
+  - 같은 원리로 `pnlRight` 내부도 `pnlSummary` → `dgvResults` 순으로 변경
+  - 최종 레이아웃: `[pnlTitle 전체폭]` / `[pnlLeft|pnlSummary+dgvResults]` / `[pnlBottom 전체폭]`
+
+- **빌드**: `csc.exe @build.rsp` exit 0, 경고 0건.
+
 ---
 
 ## 알려진 제약사항

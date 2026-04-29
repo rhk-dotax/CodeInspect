@@ -142,13 +142,16 @@ namespace CodeInspect
             // ════════════════════════════════════════
             //  왼쪽: 프로젝트 관리 패널
             // ════════════════════════════════════════
+            // AutoScroll 시 세로 스크롤바(약 17px) 폭을 고려하여 너비를 +17px 확보
+            // (스크롤바가 표시되어도 내부 컨트롤이 가로로 잘리지 않음)
             var pnlLeft = new Panel
             {
                 Dock = DockStyle.Left,
-                Width = 310,
+                Width = 327,
                 Padding = new Padding(8),
                 BackColor = Color.FromArgb(248, 249, 250),
-                BorderStyle = BorderStyle.None
+                BorderStyle = BorderStyle.None,
+                AutoScroll = true
             };
 
             var lblProjHeader = new Label
@@ -460,7 +463,6 @@ namespace CodeInspect
                 lblFilterProj, cboProjectFilter, lblFilterSev, cboSeverityFilter,
                 lblSearch, txtSearchFilter, btnExportCsv, btnClear, lblLogDir
             });
-            this.Controls.Add(pnlSummary);
 
             // 결과 그리드
             dgvResults = new DataGridView
@@ -503,7 +505,11 @@ namespace CodeInspect
             var dgvTip = new ToolTip();
             dgvTip.SetToolTip(dgvResults, "행을 더블클릭하면 검출 파일을 해당 라인에서 엽니다 (VS Code → Notepad++ → 메모장 순)");
 
-            this.Controls.Add(dgvResults);
+            // 오른쪽 컨테이너 (요약 패널 + 결과 그리드)
+            var pnlRight = new Panel { Dock = DockStyle.Fill };
+            pnlRight.Controls.Add(dgvResults);
+            pnlRight.Controls.Add(pnlSummary);
+            this.Controls.Add(pnlRight);
 
             // 하단 상태바
             var pnlBottom = new Panel { Dock = DockStyle.Bottom, Height = 28 };
@@ -518,12 +524,18 @@ namespace CodeInspect
             pnlBottom.Controls.AddRange(new Control[] { lblStatus, progressBar });
             this.Controls.Add(pnlBottom);
 
-            // Dock 순서 (아래→위로 쌓임)
+            // Dock 순서: WinForms는 높은 인덱스부터 처리. Fill은 마지막으로 deferred.
+            // 처리 순서: pnlTitle(Top, 전체 폭) → pnlBottom(Bottom, 전체 폭)
+            //           → pnlLeft(Left, 가운데 영역) → pnlRight(Fill, 나머지)
+            // BringToFront는 인덱스 0(앞)으로 이동시키므로, 마지막에 호출된 컨트롤이 가장 늦게 처리됨.
+            pnlTitle.BringToFront();    // 가장 먼저 처리 → 가장 높은 인덱스
             pnlBottom.BringToFront();
-            dgvResults.BringToFront();
-            pnlSummary.BringToFront();
             pnlLeft.BringToFront();
-            pnlTitle.BringToFront();
+            pnlRight.BringToFront();    // 가장 마지막에 처리 (Fill) → 인덱스 0
+
+            // pnlRight 내부: pnlSummary(Top) 먼저 처리, dgvResults(Fill) 마지막
+            pnlSummary.BringToFront();   // 가장 먼저 처리 → 인덱스 1
+            dgvResults.BringToFront();   // 가장 마지막 처리 (Fill) → 인덱스 0
         }
 
         private Label CreateSummaryLabel(string text, Color color, int x, int y)
@@ -1401,6 +1413,7 @@ exit 0
 
         private void PopulateGrid(List<Finding> findings)
         {
+            dgvResults.SuspendLayout();
             dgvResults.Rows.Clear();
 
             for (int i = 0; i < findings.Count; i++)
@@ -1432,6 +1445,7 @@ exit 0
                 dgvResults.Rows.Add(i + 1, projName, f.Severity, f.RuleId, fileDisplay,
                     f.LineNumber, f.Category, f.Reason, code);
             }
+            dgvResults.ResumeLayout();
         }
 
         private void UpdateSummary()
