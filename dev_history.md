@@ -416,6 +416,55 @@ codeinspect/
 
 - **빌드**: `csc.exe @build.rsp` exit 0, 경고 0건.
 
+### v1.7 — 개별 파일 수동 분석 (2026-05-04)
+**배경**: 기존에는 좌측 패널에 등록된 **프로젝트(디렉토리) 단위**로만 분석을 시작할 수 있었음 (`▶ 선택 프로젝트 분석`, `▶▶ 전체 프로젝트 분석`). 외부에서 받은 소스 1~수개의 파일을 빠르게 검사하려면 임시 폴더를 만들고 프로젝트로 등록해야 하는 번거로움이 있어, 좌측 패널에 단일/다중 파일 분석 진입점을 직접 추가.
+
+- **`MainForm.cs` 수정**
+  - 신규 필드 `private Button btnAnalyzeSingleFile;`
+  - `using System.Text;` 추가 (StringBuilder 사용)
+  - 좌측 패널 레이아웃: `btnAnalyzeAll`(Y=470, H=35) 아래에 신규 `btnAnalyzeSingleFile`(Y=510, H=30, BackColor `Color.FromArgb(102, 16, 242)` 보라색) 삽입. 후속 컨트롤(`btnCancelAnalysis` / `separator2` / Git Hook 2개 / LLM 섹션 4개 / 룰셋 섹션 6개) 모두 **Y +40** 이동
+    - `btnCancelAnalysis`: 510 → 550 / `separator2`: 552 → 592 / Git Hook 2개: 562 → 602 / `separatorLLM`: 602 → 642 / `lblLLMHeader`: 611 → 651 / `chkUseLLM`: 636 → 676 / `btnLLMConfig`: 662 → 702 / `lblLLMStatus`: 697 → 737 / `separator3`: 722 → 762 / `lblRuleHeader`: 731 → 771 / `lblRuleCount`: 733 → 773 / `btnManageRules`: 756 → 796 / `btnViewRules`/`btnUpdateRules`: 791 → 831
+    - `pnlLeft.Controls.AddRange(...)`에 `btnAnalyzeSingleFile` 등록
+  - 신규 핸들러 `BtnAnalyzeSingleFile_Click(...)`:
+    - `VulnerabilityRules.LanguageExtensions`를 순회하여 OpenFileDialog 필터 동적 구성 (`*.c;*.cc;*.cpp;*.cs;*.cxx;*.h;*.hh;*.hpp;*.hxx;*.java`). "지원 소스 파일 (...)|... |모든 파일 (*.*)|*.*"
+    - `Multiselect = true` — Ctrl/Shift로 다중 선택 허용
+    - 선택 후 `VulnerabilityRules.DetectLanguage()`로 미지원 확장자 사전 검사. 모두 미지원이면 분석 시작 안 함, 일부면 사용자에게 YesNo 다이얼로그(미지원 파일 최대 8개 표시 + "외 N개")로 진행 여부 확인 후 자동 제외
+    - 통과한 파일 목록을 `RunSingleFileAnalysis(supported)`로 전달
+  - 신규 메서드 `RunSingleFileAnalysis(List<string> filePaths)`:
+    - LLM 모드 사전 검증 — `chkUseLLM` 켜져 있으나 `LLMConfig.IsConfigured()` 실패 시 `LLMConfigForm` 모달로 자동 진입
+    - 분석 시작/완료 시 `btnAnalyzeSelected`/`btnAnalyzeAll`/`btnAnalyzeSingleFile` 모두 disable/enable. `btnCancelAnalysis`는 활성화하여 진행 중 중단 허용
+    - 취소 다이얼로그가 단건/다건을 자동 분기하도록 `_currentProjectPaths = filePaths;` 그대로 사용 (1개 선택 시 단건 YesNo, 2개+ 시 3-버튼 다이얼로그)
+    - BackgroundWorker `DoWork`에서 파일 루프:
+      - `if (_cancelMode == 2) break;` (전체 중지)
+      - 룰셋 모드: `_analyzer.AnalyzeFile(fpath)` 호출 (파일당 즉시 완료)
+      - LLM 모드: `LLMAnalyzer llm = new LLMAnalyzer(llmConfigLocal); _activeLLM = llm;` 후 `llm.AnalyzeFile(fpath)` — `Cancel()`로 진행 중 HTTP 호출 즉시 Abort 가능
+      - 그리드 표시용 prefix: `f.MatchedCode = Path.GetFileName(fpath) + "|" + f.MatchedCode;` (기존 프로젝트명 prefix와 같은 형식 → `UpdateProjectFilter()`에 자연스럽게 노출)
+      - `progressCb` 형식: `[{모드}] [{i+1}/{N}] {fileName}`
+      - 파일 처리 완료 후 `if (_cancelMode == 1) _cancelMode = 0;` (현재 파일만 건너뛰기 = 다음 파일 진입)
+    - 로그 출력:
+      - 단일 파일 분석 전용 폴더: `Path.Combine(_logDir, "single_file")`에 `WriteCommitLog` + `WriteCsvLog` (basePath=null → 절대경로 그대로)
+      - 추가로 검출 건수 > 0이면 통합 로그(`_logDir` 직접)에도 기록 (기존 `RunAnalysis`와 동일 패턴)
+    - `RunWorkerCompleted` 상태 메시지: 정상 시 `"{모드} 단일 파일 분석 완료 - {N}개 파일, {M}건 검출"`, 취소 시 `"{모드} 단일 파일 분석 중지됨 - {N}개 중 {완료}개 진행, {M}건 검출"`
+    - 결과 그리드/필터/요약은 기존 `UpdateProjectFilter()` / `ApplyFilters()` / `UpdateSummary()` 그대로 호출
+  - `RunAnalysis`에서도 `btnAnalyzeSingleFile`을 disable/enable하도록 보강 — 분석 중 다른 분석 시작 방지
+  - 폼 타이틀 v1.6 → **v1.7**
+
+- **`build.rsp` 변경 없음** — 신규 .cs 파일 추가 없음(MainForm 내부에 메서드 추가)
+
+- **재사용 자원**
+  - 분석 엔진: `CodeAnalyzer.AnalyzeFile(string)`(Analyzer.cs:33), `LLMAnalyzer.AnalyzeFile(string)`(LLMAnalyzer.cs:163) — 모두 v1.0~v1.4에서 이미 구현, 신규 분석 로직 작성 0
+  - 로그: `LogWriter.WriteCsvLog` / `WriteCommitLog` 그대로
+  - 결과 표시: `_findings` / `dgvResults` / `pnlSummary` / `UpdateProjectFilter` / `ApplyFilters` / `PopulateGrid` / `UpdateSummary` / 더블클릭 점프 / CSV 내보내기 모두 변경 없이 동작
+  - 취소: `btnCancelAnalysis` + `_cancelMode` + `_activeLLM.Cancel()` 메커니즘 동일
+
+- **검증**
+  - `csc.exe @build.rsp` exit 0, **경고 0건** (사용하지 않는 지역 변수 `completedFiles` 제거 후)
+  - EXE 145KB → 150KB
+  - C# 5 호환성: `$""`, `?.`, pattern matching, `out var`, `nameof`, auto-property initializer, expression-bodied 모두 미사용. `SortedSet<string>(StringComparer.OrdinalIgnoreCase)`, `OpenFileDialog.Multiselect`, `BackgroundWorker`, `MessageBox.Show(YesNo)` 모두 .NET Framework 4.0+ 표준
+  - 분석 엔진은 변경되지 않았고 UI 진입점/배선만 추가되었으므로 컴파일 성공 = 정합성 보장. GUI 실 동작은 사용자 수동 검증 권장
+
+**C# 5 호환성**: 모든 추가 코드에서 금지 기능 미사용. 빌드 경고 0건.
+
 ### v1.6.2 — UI 도킹 순서 버그 수정 (2026-04-29)
 **배경**: v1.6.1의 BringToFront 호출 순서가 반대로 되어 있어 실행 시 `pnlTitle`(타이틀바)이 좌측 패널 오른쪽 영역에만 표시되고 결과 영역과 겹쳐 보이는 문제 발생. WinForms는 높은 인덱스부터 처리하므로 `BringToFront`(인덱스 0으로 이동)는 마지막 호출된 컨트롤이 가장 늦게 처리됨. `pnlTitle.BringToFront()`를 마지막에 호출하면 인덱스 0이 되어 가장 늦게 처리되며, 그 시점엔 `pnlLeft`가 이미 좌측 전체 높이를 차지한 상태라 `pnlTitle`이 우측 영역에만 도킹됨.
 

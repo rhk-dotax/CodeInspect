@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
 using System.IO;
+using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -17,6 +18,7 @@ namespace CodeInspect
         private Button btnRemoveProject;
         private Button btnAnalyzeSelected;
         private Button btnAnalyzeAll;
+        private Button btnAnalyzeSingleFile;
         private Button btnCancelAnalysis;
         private Button btnInstallHookSelected;
         private Button btnRemoveHookSelected;
@@ -89,7 +91,7 @@ namespace CodeInspect
 
         private void InitializeComponent()
         {
-            this.Text = "CodeInspect - 코드 취약점 분석기 v1.6";
+            this.Text = "CodeInspect - 코드 취약점 분석기 v1.7";
             this.Size = new Size(1300, 1020);
             this.MinimumSize = new Size(1000, 880);
             this.StartPosition = FormStartPosition.CenterScreen;
@@ -235,11 +237,24 @@ namespace CodeInspect
             };
             btnAnalyzeAll.Click += BtnAnalyzeAll_Click;
 
+            // ── 단일 파일 분석 버튼 (전체 프로젝트 분석 아래) ──
+            btnAnalyzeSingleFile = new Button
+            {
+                Text = "📄 단일 파일 분석",
+                Location = new Point(8, 510),
+                Size = new Size(290, 30),
+                BackColor = Color.FromArgb(102, 16, 242),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+                Font = new Font("맑은 고딕", 9.5F, FontStyle.Bold)
+            };
+            btnAnalyzeSingleFile.Click += BtnAnalyzeSingleFile_Click;
+
             // ── 분석 중지 버튼 (분석 시작 버튼 아래) ──
             btnCancelAnalysis = new Button
             {
                 Text = "■ 분석 중지",
-                Location = new Point(8, 510),
+                Location = new Point(8, 550),
                 Size = new Size(290, 30),
                 BackColor = Color.FromArgb(255, 87, 34),
                 ForeColor = Color.White,
@@ -253,14 +268,14 @@ namespace CodeInspect
             var separator2 = new Label
             {
                 BorderStyle = BorderStyle.Fixed3D,
-                Location = new Point(8, 552),
+                Location = new Point(8, 592),
                 Size = new Size(290, 2)
             };
 
             btnInstallHookSelected = new Button
             {
                 Text = "Git Hook 설치 (선택 프로젝트)",
-                Location = new Point(8, 562),
+                Location = new Point(8, 602),
                 Size = new Size(142, 30),
                 BackColor = Color.FromArgb(40, 167, 69),
                 ForeColor = Color.White,
@@ -271,7 +286,7 @@ namespace CodeInspect
             btnRemoveHookSelected = new Button
             {
                 Text = "Git Hook 제거",
-                Location = new Point(156, 562),
+                Location = new Point(156, 602),
                 Size = new Size(142, 30),
                 BackColor = Color.FromArgb(220, 53, 69),
                 ForeColor = Color.White,
@@ -283,7 +298,7 @@ namespace CodeInspect
             var separatorLLM = new Label
             {
                 BorderStyle = BorderStyle.Fixed3D,
-                Location = new Point(8, 602),
+                Location = new Point(8, 642),
                 Size = new Size(290, 2)
             };
 
@@ -291,14 +306,14 @@ namespace CodeInspect
             {
                 Text = "LLM 분석",
                 Font = new Font("맑은 고딕", 10F, FontStyle.Bold),
-                Location = new Point(8, 611),
+                Location = new Point(8, 651),
                 AutoSize = true
             };
 
             chkUseLLM = new CheckBox
             {
                 Text = "LLM으로 분석하기 (룰셋 분석 비활성화)",
-                Location = new Point(8, 636),
+                Location = new Point(8, 676),
                 Size = new Size(290, 24),
                 Font = new Font("맑은 고딕", 9F),
                 Checked = false
@@ -308,7 +323,7 @@ namespace CodeInspect
             btnLLMConfig = new Button
             {
                 Text = "⚙ 모델 / 엔드포인트 설정",
-                Location = new Point(8, 662),
+                Location = new Point(8, 702),
                 Size = new Size(290, 30),
                 BackColor = Color.FromArgb(102, 16, 242),
                 ForeColor = Color.White,
@@ -321,7 +336,7 @@ namespace CodeInspect
                 Text = "(미설정)",
                 Font = new Font("맑은 고딕", 8.5F),
                 ForeColor = Color.Gray,
-                Location = new Point(8, 697),
+                Location = new Point(8, 737),
                 AutoSize = false,
                 Size = new Size(290, 18),
                 TextAlign = ContentAlignment.MiddleLeft
@@ -331,7 +346,7 @@ namespace CodeInspect
             var separator3 = new Label
             {
                 BorderStyle = BorderStyle.Fixed3D,
-                Location = new Point(8, 722),
+                Location = new Point(8, 762),
                 Size = new Size(290, 2)
             };
 
@@ -339,7 +354,7 @@ namespace CodeInspect
             {
                 Text = "분석 룰셋",
                 Font = new Font("맑은 고딕", 10F, FontStyle.Bold),
-                Location = new Point(8, 731),
+                Location = new Point(8, 771),
                 AutoSize = true
             };
             lblRuleCount = new Label
@@ -347,14 +362,14 @@ namespace CodeInspect
                 Text = "(0개)",
                 Font = new Font("맑은 고딕", 9F),
                 ForeColor = Color.Gray,
-                Location = new Point(80, 733),
+                Location = new Point(80, 773),
                 AutoSize = true
             };
 
             btnManageRules = new Button
             {
                 Text = "룰셋 관리 (리스트 추가/수정/삭제)",
-                Location = new Point(8, 756),
+                Location = new Point(8, 796),
                 Size = new Size(290, 30),
                 BackColor = Color.FromArgb(0, 123, 255),
                 ForeColor = Color.White,
@@ -365,7 +380,7 @@ namespace CodeInspect
             btnViewRules = new Button
             {
                 Text = "룰셋 보기 (notepad)",
-                Location = new Point(8, 791),
+                Location = new Point(8, 831),
                 Size = new Size(142, 30),
                 BackColor = Color.FromArgb(108, 117, 125),
                 ForeColor = Color.White,
@@ -376,7 +391,7 @@ namespace CodeInspect
             btnUpdateRules = new Button
             {
                 Text = "룰셋 업데이트",
-                Location = new Point(156, 791),
+                Location = new Point(156, 831),
                 Size = new Size(142, 30),
                 BackColor = Color.FromArgb(23, 162, 184),
                 ForeColor = Color.White,
@@ -387,7 +402,7 @@ namespace CodeInspect
             pnlLeft.Controls.AddRange(new Control[] {
                 lblProjHeader, lblProjectCount, lstProjects,
                 btnAddProject, btnRemoveProject,
-                separator1, btnAnalyzeSelected, btnAnalyzeAll, btnCancelAnalysis,
+                separator1, btnAnalyzeSelected, btnAnalyzeAll, btnAnalyzeSingleFile, btnCancelAnalysis,
                 separator2, btnInstallHookSelected, btnRemoveHookSelected,
                 separatorLLM, lblLLMHeader, chkUseLLM, btnLLMConfig, lblLLMStatus,
                 separator3, lblRuleHeader, lblRuleCount,
@@ -678,6 +693,252 @@ namespace CodeInspect
             RunAnalysis(paths);
         }
 
+        // ════════════════════════════════════════
+        //  단일/다중 파일 분석 (개별 파일 수동 분석)
+        // ════════════════════════════════════════
+        private void BtnAnalyzeSingleFile_Click(object sender, EventArgs e)
+        {
+            // VulnerabilityRules.LanguageExtensions 기반으로 파일 필터 동적 구성
+            var extSet = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in VulnerabilityRules.LanguageExtensions)
+            {
+                foreach (var ext in kv.Value) extSet.Add(ext);
+            }
+            var sb = new StringBuilder();
+            bool first = true;
+            foreach (var ext in extSet)
+            {
+                if (!first) sb.Append(";");
+                sb.Append("*").Append(ext);
+                first = false;
+            }
+            string filter = "지원 소스 파일 (" + sb.ToString() + ")|" + sb.ToString() + "|모든 파일 (*.*)|*.*";
+
+            using (var dlg = new OpenFileDialog())
+            {
+                dlg.Title = "분석할 파일 선택 (Ctrl/Shift로 다중 선택 가능)";
+                dlg.Filter = filter;
+                dlg.Multiselect = true;
+                dlg.CheckFileExists = true;
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+                var selected = new List<string>();
+                foreach (var f in dlg.FileNames) selected.Add(f);
+                if (selected.Count == 0) return;
+
+                // 미지원 확장자 사전 검사
+                var unsupported = new List<string>();
+                var supported = new List<string>();
+                foreach (var f in selected)
+                {
+                    string lang = VulnerabilityRules.DetectLanguage(f);
+                    if (string.IsNullOrEmpty(lang)) unsupported.Add(f);
+                    else supported.Add(f);
+                }
+
+                if (unsupported.Count > 0 && supported.Count == 0)
+                {
+                    MessageBox.Show(this,
+                        "선택한 모든 파일이 지원하지 않는 형식입니다.\n지원: C/C++/Java/C# 소스만 가능합니다.",
+                        "분석 불가", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                if (unsupported.Count > 0)
+                {
+                    var sbMsg = new StringBuilder();
+                    sbMsg.Append("다음 파일은 지원하지 않는 형식이라 자동 제외됩니다:\n\n");
+                    int show = unsupported.Count;
+                    if (show > 8) show = 8;
+                    for (int i = 0; i < show; i++)
+                        sbMsg.Append("• ").Append(Path.GetFileName(unsupported[i])).Append("\n");
+                    if (unsupported.Count > 8)
+                        sbMsg.Append("… 외 ").Append(unsupported.Count - 8).Append("개\n");
+                    sbMsg.Append("\n").Append(supported.Count).Append("개 파일로 계속 진행하시겠습니까?");
+
+                    var r = MessageBox.Show(this, sbMsg.ToString(),
+                        "지원하지 않는 형식 포함",
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    if (r != DialogResult.Yes) return;
+                }
+
+                RunSingleFileAnalysis(supported);
+            }
+        }
+
+        private void RunSingleFileAnalysis(List<string> filePaths)
+        {
+            // ── LLM 모드 사전 검증 ──
+            bool useLLM = chkUseLLM.Checked;
+            LLMConfig llmConfig = null;
+            if (useLLM)
+            {
+                llmConfig = LLMConfig.Load();
+                if (!llmConfig.IsConfigured())
+                {
+                    MessageBox.Show("LLM 설정이 필요합니다.\n설정 다이얼로그를 띄웁니다.",
+                        "LLM 미설정", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    using (var dlg = new LLMConfigForm())
+                    {
+                        if (dlg.ShowDialog(this) != DialogResult.OK)
+                        {
+                            lblStatus.Text = "LLM 설정 취소 - 분석을 시작하지 않았습니다.";
+                            return;
+                        }
+                    }
+                    llmConfig = LLMConfig.Load();
+                    UpdateLLMStatusLabel();
+                    if (!llmConfig.IsConfigured())
+                    {
+                        MessageBox.Show("LLM 설정이 완료되지 않았습니다.", "LLM 설정",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                }
+            }
+
+            btnAnalyzeSelected.Enabled = false;
+            btnAnalyzeAll.Enabled = false;
+            btnAnalyzeSingleFile.Enabled = false;
+            btnCancelAnalysis.Enabled = true;
+            btnCancelAnalysis.Text = "■ 분석 중지";
+            _findings.Clear();
+            dgvResults.Rows.Clear();
+            progressBar.Value = 0;
+
+            if (!useLLM) _analyzer = new CodeAnalyzer();
+
+            int totalFiles = filePaths.Count;
+            string modeLabel = useLLM ? "LLM" : "룰셋";
+            lblStatus.Text = string.Format("{0} 단일 파일 분석 중... (0/{1} 파일)", modeLabel, totalFiles);
+
+            bool useLLMLocal = useLLM;
+            LLMConfig llmConfigLocal = llmConfig;
+
+            // 취소 다이얼로그가 단건/다건 자동 분기하도록 _currentProjectPaths에 파일 경로를 그대로 넣음
+            _cancelMode = 0;
+            _currentProjectPaths = filePaths;
+
+            _worker = new BackgroundWorker();
+            _worker.WorkerReportsProgress = true;
+            _worker.WorkerSupportsCancellation = true;
+            BackgroundWorker worker = _worker;
+
+            worker.DoWork += (ws, we) =>
+            {
+                var allFindings = new List<Finding>();
+                int doneLocal = 0;
+                for (int i = 0; i < filePaths.Count; i++)
+                {
+                    if (_cancelMode == 2) break;
+
+                    string fpath = filePaths[i];
+                    string fname = Path.GetFileName(fpath);
+
+                    int overallPct = (int)(((double)i / totalFiles) * 100);
+                    string prefix = (_cancelMode != 0) ? "[중지 중...] " : "";
+                    string msg = string.Format("{0}[{1}] [{2}/{3}] {4}",
+                        prefix, modeLabel, i + 1, totalFiles, fname);
+                    worker.ReportProgress(Math.Min(overallPct, 100), msg);
+
+                    List<Finding> findings;
+                    if (useLLMLocal)
+                    {
+                        LLMAnalyzer llm = new LLMAnalyzer(llmConfigLocal);
+                        _activeLLM = llm;
+                        try
+                        {
+                            findings = llm.AnalyzeFile(fpath);
+                        }
+                        finally
+                        {
+                            _activeLLM = null;
+                        }
+                    }
+                    else
+                    {
+                        findings = _analyzer.AnalyzeFile(fpath);
+                    }
+
+                    // 그리드 표시용 prefix: 파일명을 "프로젝트" 자리에 사용
+                    foreach (var f in findings) f.MatchedCode = fname + "|" + f.MatchedCode;
+
+                    allFindings.AddRange(findings);
+                    doneLocal++;
+
+                    // "현재 파일만 건너뛰기" — 모드 리셋 후 다음 파일로 진행
+                    if (_cancelMode == 1) _cancelMode = 0;
+                }
+
+                // 단일 파일 분석 전용 로그 폴더 + 통합 로그
+                string singleFileLogDir = Path.Combine(_logDir, "single_file");
+                LogWriter.WriteCommitLog(allFindings, singleFileLogDir, null);
+                LogWriter.WriteCsvLog(allFindings, singleFileLogDir, null);
+                if (allFindings.Count > 0)
+                {
+                    LogWriter.WriteCommitLog(allFindings, _logDir, null);
+                    LogWriter.WriteCsvLog(allFindings, _logDir, null);
+                }
+
+                we.Result = new object[] { allFindings, doneLocal };
+            };
+
+            worker.ProgressChanged += (ws, we) =>
+            {
+                progressBar.Value = Math.Min(we.ProgressPercentage, 100);
+                lblStatus.Text = (string)we.UserState;
+            };
+
+            worker.RunWorkerCompleted += (ws, we) =>
+            {
+                bool wasCancelled = (_cancelMode != 0) || we.Cancelled;
+
+                btnAnalyzeSelected.Enabled = true;
+                btnAnalyzeAll.Enabled = true;
+                btnAnalyzeSingleFile.Enabled = true;
+                btnCancelAnalysis.Enabled = false;
+                btnCancelAnalysis.Text = "■ 분석 중지";
+
+                _cancelMode = 0;
+                _worker = null;
+                _activeLLM = null;
+                _currentProjectPaths = null;
+
+                if (we.Error != null)
+                {
+                    ErrorLogger.Log(we.Error, "MainForm.RunSingleFileAnalysis (BackgroundWorker)");
+                    MessageBox.Show("분석 중 오류 발생: " + we.Error.Message, "오류",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    lblStatus.Text = "오류 발생";
+                    return;
+                }
+
+                var result = (object[])we.Result;
+                _findings = (List<Finding>)result[0];
+                int doneCount = (int)result[1];
+                if (_findings == null) _findings = new List<Finding>();
+
+                lblLogDir.Text = "로그 폴더 열기";
+                UpdateProjectFilter();
+                ApplyFilters();
+                UpdateSummary();
+
+                if (wasCancelled)
+                {
+                    lblStatus.Text = string.Format("{0} 단일 파일 분석 중지됨 - {1}개 중 {2}개 진행, {3}건 검출",
+                        modeLabel, totalFiles, doneCount, _findings.Count);
+                }
+                else
+                {
+                    progressBar.Value = 100;
+                    lblStatus.Text = string.Format("{0} 단일 파일 분석 완료 - {1}개 파일, {2}건 검출",
+                        modeLabel, totalFiles, _findings.Count);
+                }
+            };
+
+            worker.RunWorkerAsync();
+        }
+
         private void RunAnalysis(List<string> projectPaths)
         {
             // ── LLM 모드 사전 검증 ──
@@ -711,6 +972,7 @@ namespace CodeInspect
 
             btnAnalyzeSelected.Enabled = false;
             btnAnalyzeAll.Enabled = false;
+            btnAnalyzeSingleFile.Enabled = false;
             btnCancelAnalysis.Enabled = true;
             btnCancelAnalysis.Text = "■ 분석 중지";
             _findings.Clear();
@@ -823,6 +1085,7 @@ namespace CodeInspect
 
                 btnAnalyzeSelected.Enabled = true;
                 btnAnalyzeAll.Enabled = true;
+                btnAnalyzeSingleFile.Enabled = true;
                 btnCancelAnalysis.Enabled = false;
                 btnCancelAnalysis.Text = "■ 분석 중지";
 
